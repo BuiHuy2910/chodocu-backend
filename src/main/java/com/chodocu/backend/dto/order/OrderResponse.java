@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class OrderResponse {
     private Long id;
+    private String orderCode;
     private ProductResponse product;
     private UserSummaryDto buyer;
     private UserSummaryDto seller;
@@ -25,6 +26,15 @@ public class OrderResponse {
     private String sellerNote;
     private String status;
     private String statusLabel;
+    private String paymentStatus;
+    private String feePayer;
+    private BigDecimal platformFeeRate;
+    private BigDecimal platformFeeAmount;
+    private BigDecimal finalSellerAmount;
+    private BigDecimal finalBuyerAmount;
+    private String cancelReason;
+    private String disputeReason;
     private String createdAt;
     private String updatedAt;
+    private String completedAt;
 }

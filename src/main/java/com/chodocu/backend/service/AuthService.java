@@ -3,6 +3,7 @@ package com.chodocu.backend.service;
 import com.chodocu.backend.dto.auth.AuthResponse;
 import com.chodocu.backend.dto.auth.LoginRequest;
 import com.chodocu.backend.dto.auth.RegisterRequest;
+import com.chodocu.backend.dto.auth.UpdateProfileRequest;
 import com.chodocu.backend.dto.auth.UserSummaryDto;
 import com.chodocu.backend.entity.University;
 import com.chodocu.backend.entity.User;
@@ -101,6 +102,43 @@ public class AuthService {
         return dtoMapper.toUserSummary(user);
     }
 
+    public UserSummaryDto getProfile(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+        return dtoMapper.toUserSummary(user);
+    }
+
+    @Transactional
+    public UserSummaryDto updateProfile(UpdateProfileRequest request, String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+        if (request.getFullName() != null && !request.getFullName().isBlank()) {
+            user.setFullName(request.getFullName().trim());
+        }
+        if (request.getPhone() != null) user.setPhone(request.getPhone());
+        if (request.getDormArea() != null) user.setDormArea(request.getDormArea());
+        if (request.getAvatarUrl() != null && !request.getAvatarUrl().isBlank()) {
+            user.setAvatarUrl(request.getAvatarUrl());
+        }
+        if (request.getBio() != null) user.setBio(request.getBio());
+        if (request.getUniversityId() != null) {
+            universityRepository.findById(request.getUniversityId()).ifPresent(user::setUniversity);
+        }
+        return dtoMapper.toUserSummary(userRepository.save(user));
+    }
+
+    /** Chỉ cập nhật avatar — dùng cho nút "Đổi ảnh đại diện" ở app. */
+    @Transactional
+    public UserSummaryDto updateAvatar(String email, String avatarUrl) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+        user.setAvatarUrl(avatarUrl);
+        return dtoMapper.toUserSummary(userRepository.save(user));
+    }
+
+    /**
+     * Legacy updateProfile — kept for backward compatibility with existing callers.
+     */
     @Transactional
     public UserSummaryDto updateProfile(String email, String fullName, String phone, String dormArea, Long universityId) {
         User user = userRepository.findByEmail(email)

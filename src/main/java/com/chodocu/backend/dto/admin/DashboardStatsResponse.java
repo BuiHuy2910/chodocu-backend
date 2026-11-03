@@ -24,4 +24,7 @@ public class DashboardStatsResponse {
     private BigDecimal totalTransactionValue;
     private Map<String, Long> productsByCategory;
     private Map<String, Long> productsByUniversity;
+    private Long totalModerators;
+    private Long pendingReports;
+    private java.math.BigDecimal totalPlatformFees;
 }

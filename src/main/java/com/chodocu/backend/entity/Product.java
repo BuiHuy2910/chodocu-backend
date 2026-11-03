@@ -51,10 +51,11 @@ public class Product {
 
     private String pickupSpot;
 
+    // Mặc định PENDING: mọi bài đăng mới phải qua admin duyệt
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default
-    private ProductStatus status = ProductStatus.APPROVED;
+    private ProductStatus status = ProductStatus.PENDING;
 
     private String rejectReason;
 

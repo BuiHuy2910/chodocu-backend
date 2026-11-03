@@ -12,5 +12,6 @@ public interface OrderRequestRepository extends JpaRepository<OrderRequest, Long
     List<OrderRequest> findByBuyerIdOrderByCreatedAtDesc(Long buyerId);
     List<OrderRequest> findBySellerIdOrderByCreatedAtDesc(Long sellerId);
     List<OrderRequest> findByProductIdOrderByCreatedAtDesc(Long productId);
+    List<OrderRequest> findByStatusOrderByCreatedAtDesc(OrderStatus status);
     long countByStatus(OrderStatus status);
 }

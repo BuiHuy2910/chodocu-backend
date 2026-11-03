@@ -35,6 +35,7 @@ public class DtoMapper {
                 .universityShortName(user.getUniversity() != null ? user.getUniversity().getShortName() : "ĐHQG")
                 .dormArea(user.getDormArea())
                 .role(user.getRole().name())
+                .bio(user.getBio())
                 .verifiedStudent(user.getVerifiedStudent())
                 .active(user.getActive())
                 .rating(user.getRating())
@@ -80,6 +81,7 @@ public class DtoMapper {
         if (order == null) return null;
         return OrderResponse.builder()
                 .id(order.getId())
+                .orderCode(order.getOrderCode())
                 .product(toProductResponse(order.getProduct(), false))
                 .buyer(toUserSummary(order.getBuyer()))
                 .seller(toUserSummary(order.getSeller()))
@@ -90,8 +92,17 @@ public class DtoMapper {
                 .sellerNote(order.getSellerNote())
                 .status(order.getStatus().name())
                 .statusLabel(getOrderStatusLabel(order.getStatus()))
+                .paymentStatus(order.getPaymentStatus())
+                .feePayer(order.getFeePayer())
+                .platformFeeRate(order.getPlatformFeeRate())
+                .platformFeeAmount(order.getPlatformFeeAmount())
+                .finalSellerAmount(order.getFinalSellerAmount())
+                .finalBuyerAmount(order.getFinalBuyerAmount())
+                .cancelReason(order.getCancelReason())
+                .disputeReason(order.getDisputeReason())
                 .createdAt(order.getCreatedAt() != null ? order.getCreatedAt().format(FORMATTER) : "")
                 .updatedAt(order.getUpdatedAt() != null ? order.getUpdatedAt().format(FORMATTER) : "")
+                .completedAt(order.getCompletedAt() != null ? order.getCompletedAt().format(FORMATTER) : "")
                 .build();
     }
 
@@ -124,6 +135,7 @@ public class DtoMapper {
             case PENDING -> "Chờ người bán duyệt";
             case ACCEPTED -> "Đang giao dịch / Hẹn gặp";
             case COMPLETED -> "Đã hoàn tất giao dịch";
+            case DISPUTED -> "Đang tranh chấp - Admin xử lý";
             case REJECTED -> "Người bán đã từ chối";
             case CANCELLED -> "Đã hủy yêu cầu";
         };

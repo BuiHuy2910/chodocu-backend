@@ -59,11 +59,14 @@ public class ProductController {
     @PostMapping
     public ResponseEntity<ApiResponse<ProductResponse>> createProduct(
             @Valid @RequestBody ProductRequest request,
-            @RequestParam(defaultValue = "true") boolean autoApprove,
             @AuthenticationPrincipal CustomUserDetails currentUser
     ) {
-        ProductResponse created = productService.createProduct(request, currentUser.getEmail(), autoApprove);
-        return ResponseEntity.ok(ApiResponse.ok("Đăng tin thành công!", created));
+        ProductResponse created = productService.createProduct(request, currentUser.getEmail());
+        boolean pending = "PENDING".equals(created.getStatus());
+        String message = pending
+                ? "Đã gửi tin đăng! Vui lòng chờ admin duyệt trước khi hiển thị."
+                : "Đăng tin thành công!";
+        return ResponseEntity.ok(ApiResponse.ok(message, created));
     }
 
     @PutMapping("/{id}")

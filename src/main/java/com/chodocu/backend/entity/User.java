@@ -40,6 +40,9 @@ public class User {
 
     private String dormArea;
 
+    @Column(length = 500)
+    private String bio;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default

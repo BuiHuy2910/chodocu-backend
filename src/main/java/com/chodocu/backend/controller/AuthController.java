@@ -4,6 +4,7 @@ import com.chodocu.backend.dto.ApiResponse;
 import com.chodocu.backend.dto.auth.AuthResponse;
 import com.chodocu.backend.dto.auth.LoginRequest;
 import com.chodocu.backend.dto.auth.RegisterRequest;
+import com.chodocu.backend.dto.auth.UpdateProfileRequest;
 import com.chodocu.backend.dto.auth.UserSummaryDto;
 import com.chodocu.backend.security.CustomUserDetails;
 import com.chodocu.backend.service.AuthService;
@@ -45,14 +46,25 @@ public class AuthController {
     @PutMapping("/profile")
     public ResponseEntity<ApiResponse<UserSummaryDto>> updateProfile(
             @AuthenticationPrincipal CustomUserDetails currentUser,
-            @RequestBody Map<String, Object> body
+            @RequestBody UpdateProfileRequest request
     ) {
-        String fullName = (String) body.get("fullName");
-        String phone = (String) body.get("phone");
-        String dormArea = (String) body.get("dormArea");
-        Long universityId = body.get("universityId") != null ? Long.valueOf(body.get("universityId").toString()) : null;
-
-        UserSummaryDto updated = authService.updateProfile(currentUser.getEmail(), fullName, phone, dormArea, universityId);
+        UserSummaryDto updated = authService.updateProfile(request, currentUser.getEmail());
         return ResponseEntity.ok(ApiResponse.ok("Cập nhật hồ sơ sinh viên thành công!", updated));
+    }
+
+    /**
+     * Đổi avatar nhanh: client upload ảnh qua /api/upload rồi gửi URL vào đây.
+     */
+    @PutMapping("/avatar")
+    public ResponseEntity<ApiResponse<UserSummaryDto>> updateAvatar(
+            @AuthenticationPrincipal CustomUserDetails currentUser,
+            @RequestBody Map<String, String> body
+    ) {
+        String avatarUrl = body.get("avatarUrl");
+        if (avatarUrl == null || avatarUrl.isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Thiếu đường dẫn ảnh đại diện"));
+        }
+        UserSummaryDto updated = authService.updateAvatar(currentUser.getEmail(), avatarUrl);
+        return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật ảnh đại diện!", updated));
     }
 }

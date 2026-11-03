@@ -1,9 +1,25 @@
 package com.chodocu.backend.enums;
 
+/**
+ * Vòng đời đơn hàng trên sàn PassUni.
+ *
+ * PENDING   : Người mua gửi yêu cầu đặt mua / hẹn gặp → chờ người bán duyệt
+ * ACCEPTED  : Người bán đã duyệt → sản phẩm chuyển IN_TRANSACTION
+ * COMPLETED : Giao dịch hoàn tất → sản phẩm chuyển SOLD, chốt phí sàn
+ * DISPUTED  : Một bên báo tranh chấp → admin xử lý
+ * REJECTED  : Người bán từ chối
+ * CANCELLED : Người mua hủy (hoặc admin hủy)
+ */
 public enum OrderStatus {
-    PENDING,    // Người mua gửi yêu cầu đặt mua / hẹn gặp -> Chờ người bán duyệt
-    ACCEPTED,   // Người bán đã duyệt -> Sản phẩm chuyển sang Đang giao dịch (IN_TRANSACTION)
-    COMPLETED,  // Đã giao đồ thành công -> Sản phẩm chuyển sang Đã bán (SOLD)
-    REJECTED,   // Người bán từ chối
-    CANCELLED   // Người mua hủy yêu cầu
+    PENDING,
+    ACCEPTED,
+    COMPLETED,
+    DISPUTED,
+    REJECTED,
+    CANCELLED;
+
+    public boolean isFinal() {
+        return this == COMPLETED || this == REJECTED || this == CANCELLED;
+    }
 }
+

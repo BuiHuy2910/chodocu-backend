@@ -6,6 +6,7 @@ import com.chodocu.backend.enums.ProductCondition;
 import com.chodocu.backend.enums.ProductStatus;
 import com.chodocu.backend.enums.Role;
 import com.chodocu.backend.repository.*;
+import com.chodocu.backend.service.PlatformSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -27,10 +28,16 @@ public class DataInitializer implements CommandLineRunner {
     private final OrderRequestRepository orderRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final WishlistRepository wishlistRepository;
+    private final PlatformSettingRepository platformSettingRepository;
+    private final PlatformFeeTierRepository platformFeeTierRepository;
+    private final TransactionRepository transactionRepository;
+    private final PlatformSettingService platformSettingService;
     private final PasswordEncoder passwordEncoder;
 
     @Override
     public void run(String... args) {
+        seedPlatformConfig();
+
         if (categoryRepository.count() > 0) {
             log.info("Database đã có dữ liệu mẫu. Bỏ qua bước khởi tạo.");
             return;
@@ -431,7 +438,10 @@ public class DataInitializer implements CommandLineRunner {
         wishlistRepository.save(Wishlist.builder().user(minhThu).product(p1).build());
         wishlistRepository.save(Wishlist.builder().user(minhThu).product(p3).build());
 
-        orderRepository.save(OrderRequest.builder()
+        // Đơn 1: đang chờ người bán duyệt — đã chốt phí sàn tại thời điểm tạo
+        com.chodocu.backend.dto.admin.FeeCalculationResponse fee1 =
+                platformSettingService.calculate(new BigDecimal("110000"));
+        OrderRequest order1 = orderRepository.save(OrderRequest.builder()
                 .product(p1)
                 .buyer(minhThu)
                 .seller(hoangYen)
@@ -440,6 +450,49 @@ public class DataInitializer implements CommandLineRunner {
                 .meetupTime("17:00 Hôm nay")
                 .buyerNote("Chiều 17h mình xuống sảnh BA1 nhận bàn nhé Yến ơi!")
                 .status(OrderStatus.PENDING)
+                .platformFeeRate(fee1.getFeeRate())
+                .platformFeeAmount(fee1.getPlatformFeeAmount())
+                .finalSellerAmount(fee1.getSellerReceiveAmount())
+                .finalBuyerAmount(fee1.getBuyerPayAmount())
+                .feePayer(fee1.getFeePayer())
+                .build());
+        order1.setOrderCode(String.format("PD%06d", order1.getId()));
+        orderRepository.save(order1);
+
+        // Đơn 2: đã hoàn tất — dùng để demo báo cáo phí sàn của admin
+        com.chodocu.backend.dto.admin.FeeCalculationResponse fee2 =
+                platformSettingService.calculate(new BigDecimal("120000"));
+        OrderRequest order2 = orderRepository.save(OrderRequest.builder()
+                .product(p2)
+                .buyer(ngocAnh)
+                .seller(hoangYen)
+                .offeredPrice(new BigDecimal("120000"))
+                .meetupLocation("Sảnh Tòa H1 - ĐH Bách Khoa")
+                .meetupTime("Hôm qua")
+                .status(OrderStatus.COMPLETED)
+                .paymentStatus("COMPLETED")
+                .platformFeeRate(fee2.getFeeRate())
+                .platformFeeAmount(fee2.getPlatformFeeAmount())
+                .finalSellerAmount(fee2.getSellerReceiveAmount())
+                .finalBuyerAmount(fee2.getBuyerPayAmount())
+                .feePayer(fee2.getFeePayer())
+                .completedAt(java.time.LocalDateTime.now())
+                .build());
+        order2.setOrderCode(String.format("PD%06d", order2.getId()));
+        orderRepository.save(order2);
+
+        p2.setStatus(ProductStatus.SOLD);
+        productRepository.save(p2);
+
+        transactionRepository.save(Transaction.builder()
+                .order(order2)
+                .buyer(ngocAnh)
+                .seller(hoangYen)
+                .product(p2)
+                .transactionAmount(new BigDecimal("120000"))
+                .platformFeeRate(fee2.getFeeRate())
+                .platformFeeAmount(fee2.getPlatformFeeAmount())
+                .sellerReceiveAmount(fee2.getSellerReceiveAmount())
                 .build());
 
         chatMessageRepository.save(ChatMessage.builder()
@@ -473,5 +526,60 @@ public class DataInitializer implements CommandLineRunner {
                 .build());
 
         log.info("Hoàn tất khởi tạo dữ liệu mẫu Chợ Đồ Cũ Sinh Viên (PassUni)!");
+    }
+
+    /**
+     * Cấu hình phí sàn & vận hành mặc định.
+     * Chạy mỗi lần khởi động nhưng chỉ chèn khi key chưa tồn tại (admin đã sửa thì giữ nguyên).
+     */
+    private void seedPlatformConfig() {
+        seedSetting("platform_fee_rate", "0.05", "Tỷ lệ phí sàn cơ bản (0.05 = 5%)");
+        seedSetting("min_platform_fee", "2000", "Phí sàn tối thiểu (VNĐ)");
+        seedSetting("max_platform_fee", "50000", "Phí sàn tối đa (VNĐ). 0 = không giới hạn");
+        seedSetting("fee_enabled", "true", "Bật/tắt thu phí sàn");
+        seedSetting("fee_payer", "SELLER", "Bên chịu phí: SELLER | BUYER | SPLIT");
+        seedSetting("fee_round_step", "1000", "Làm tròn phí theo bước (VNĐ)");
+        seedSetting("post_require_approval", "true", "Bài đăng phải chờ admin duyệt");
+        seedSetting("max_images_per_post", "5", "Số ảnh tối đa mỗi bài đăng");
+        seedSetting("order_auto_cancel_hours", "72", "Tự hủy đơn PENDING sau N giờ");
+        seedSetting("app_name", "PassUni", "Tên ứng dụng hiển thị");
+
+        if (platformFeeTierRepository.count() == 0) {
+            platformFeeTierRepository.save(PlatformFeeTier.builder()
+                    .name("Đơn nhỏ (< 100.000đ)")
+                    .minAmount(BigDecimal.ZERO)
+                    .maxAmount(new BigDecimal("100000"))
+                    .feeRate(new BigDecimal("0.03"))
+                    .priority(10)
+                    .active(true)
+                    .build());
+            platformFeeTierRepository.save(PlatformFeeTier.builder()
+                    .name("Đơn vừa (100k - 1 triệu)")
+                    .minAmount(new BigDecimal("100000"))
+                    .maxAmount(new BigDecimal("1000000"))
+                    .feeRate(new BigDecimal("0.04"))
+                    .priority(20)
+                    .active(true)
+                    .build());
+            platformFeeTierRepository.save(PlatformFeeTier.builder()
+                    .name("Đơn lớn (> 1 triệu)")
+                    .minAmount(new BigDecimal("1000000"))
+                    .maxAmount(null)
+                    .feeRate(new BigDecimal("0.05"))
+                    .priority(30)
+                    .active(true)
+                    .build());
+            log.info("Đã tạo 3 bậc phí sàn mặc định.");
+        }
+    }
+
+    private void seedSetting(String key, String value, String description) {
+        if (platformSettingRepository.findByKey(key).isEmpty()) {
+            platformSettingRepository.save(PlatformSetting.builder()
+                    .key(key)
+                    .value(value)
+                    .description(description)
+                    .build());
+        }
     }
 }

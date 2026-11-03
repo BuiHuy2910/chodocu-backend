@@ -40,6 +40,10 @@ public class ProductService {
     private final UserRepository userRepository;
     private final WishlistRepository wishlistRepository;
     private final DtoMapper dtoMapper;
+    private final PlatformSettingService platformSettingService;
+
+    /** Số ảnh tối đa cho mỗi bài đăng (cấu hình bởi admin, mặc định 5). */
+    private static final int DEFAULT_MAX_IMAGES = 5;
 
     public PageResponse<ProductResponse> searchProducts(
             String keyword,
@@ -93,7 +97,7 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductResponse createProduct(ProductRequest request, String sellerEmail, boolean autoApprove) {
+    public ProductResponse createProduct(ProductRequest request, String sellerEmail) {
         User seller = userRepository.findByEmail(sellerEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản người bán"));
 
@@ -107,7 +111,16 @@ public class ProductService {
                 ? new ArrayList<>(request.getImageUrls())
                 : List.of("https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=800&auto=format&fit=crop&q=80");
 
+        if (images.size() > DEFAULT_MAX_IMAGES) {
+            images = new ArrayList<>(images.subList(0, DEFAULT_MAX_IMAGES));
+        }
+
         BigDecimal finalPrice = Boolean.TRUE.equals(request.getIsFree()) ? BigDecimal.ZERO : request.getPrice();
+
+        // Không tin tưởng client: quyền duyệt do server quyết định
+        boolean autoApprove = seller.getRole() == Role.ADMIN
+                || seller.getRole() == Role.MODERATOR
+                || !platformSettingService.isPostApprovalRequired();
 
         Product product = Product.builder()
                 .title(request.getTitle().trim())
@@ -163,6 +176,15 @@ public class ProductService {
         product.setUniversity(university);
         if (request.getImageUrls() != null && !request.getImageUrls().isEmpty()) {
             product.setImageUrls(new ArrayList<>(request.getImageUrls()));
+        }
+
+        // Người bán sửa nội dung -> phải duyệt lại (trừ khi admin/mod sửa)
+        if (user.getRole() == Role.STUDENT
+                && platformSettingService.isPostApprovalRequired()
+                && product.getStatus() != ProductStatus.IN_TRANSACTION
+                && product.getStatus() != ProductStatus.SOLD) {
+            product.setStatus(ProductStatus.PENDING);
+            product.setRejectReason(null);
         }
 
         return dtoMapper.toProductResponse(productRepository.save(product), false);
