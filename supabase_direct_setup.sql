@@ -1,4 +1,4 @@
-﻿-- =================================================================================
+-- =================================================================================
 -- PASSUNI — CHẾ ĐỘ APP GỌI THẲNG SUPABASE (KHÔNG CẦN BACKEND)
 -- Chạy file này SAU database_schema.sql và seed_data.sql, trong Supabase SQL Editor.
 --
@@ -628,6 +628,18 @@ grant usage on schema public to anon, authenticated;
 
 -- Chỉ đọc dữ liệu công khai
 grant select on categories, universities, v_public_products to anon, authenticated;
+
+-- Bảng tra cứu công khai: nếu RLS đang bật thì BẮT BUỘC phải có policy,
+-- nếu không app sẽ nhận về mảng rỗng (danh mục / trường trống).
+alter table categories enable row level security;
+drop policy if exists "categories public read" on categories;
+create policy "categories public read" on categories
+    for select to anon, authenticated using (true);
+
+alter table universities enable row level security;
+drop policy if exists "universities public read" on universities;
+create policy "universities public read" on universities
+    for select to anon, authenticated using (true);
 
 -- Không cấp quyền trên bảng gốc: mọi ghi/đọc riêng tư đi qua RPC
 grant execute on function api_login(text, text) to anon, authenticated;

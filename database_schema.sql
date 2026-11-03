@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Ràng buộc role: STUDENT | ADMIN | MODERATOR
+-- (bản schema cũ chỉ cho STUDENT/ADMIN nên phải thay thế để seed được tài khoản kiểm duyệt)
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_role;
+ALTER TABLE users ADD CONSTRAINT chk_users_role
+    CHECK (role IN ('STUDENT', 'ADMIN', 'MODERATOR'));
+
 -- =================================================================================
 -- 3. SẢN PHẨM
 -- status: PENDING | APPROVED | REJECTED | IN_TRANSACTION | SOLD | HIDDEN
@@ -86,6 +93,17 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Chuẩn hoá tình trạng sản phẩm theo enum của backend (ProductCondition)
+ALTER TABLE products DROP CONSTRAINT IF EXISTS products_item_condition_check;
+ALTER TABLE products DROP CONSTRAINT IF EXISTS chk_products_item_condition;
+ALTER TABLE products ADD CONSTRAINT chk_products_item_condition
+    CHECK (item_condition IN ('NEW_100', 'LIKE_NEW_95', 'GOOD_85', 'USABLE'));
+
+ALTER TABLE products DROP CONSTRAINT IF EXISTS products_status_check;
+ALTER TABLE products DROP CONSTRAINT IF EXISTS chk_products_status;
+ALTER TABLE products ADD CONSTRAINT chk_products_status
+    CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'IN_TRANSACTION', 'SOLD', 'HIDDEN'));
 
 CREATE TABLE IF NOT EXISTS product_images (
     product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
