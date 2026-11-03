@@ -1,0 +1,17 @@
+# ---- Maven ----
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# ---- Log ----
+*.log
+
+# ---- IDE / OS ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Upload runtime ----
+uploads/
