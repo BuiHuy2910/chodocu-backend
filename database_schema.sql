@@ -179,6 +179,13 @@ ALTER TABLE order_requests ADD COLUMN IF NOT EXISTS status_updated_by BIGINT REF
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_order_code ON order_requests(order_code) WHERE order_code IS NOT NULL;
 
+-- Trạng thái đơn: PENDING | ACCEPTED | COMPLETED | REJECTED | CANCELLED | DISPUTED
+-- (bản cũ thiếu DISPUTED nên luồng khiếu nại của app bị chặn)
+ALTER TABLE order_requests DROP CONSTRAINT IF EXISTS order_requests_status_check;
+ALTER TABLE order_requests DROP CONSTRAINT IF EXISTS chk_order_requests_status;
+ALTER TABLE order_requests ADD CONSTRAINT chk_order_requests_status
+    CHECK (status IN ('PENDING', 'ACCEPTED', 'COMPLETED', 'REJECTED', 'CANCELLED', 'DISPUTED'));
+
 -- Sinh mã đơn cho dữ liệu cũ chưa có
 UPDATE order_requests
 SET order_code = 'PD' || LPAD(id::TEXT, 6, '0')
