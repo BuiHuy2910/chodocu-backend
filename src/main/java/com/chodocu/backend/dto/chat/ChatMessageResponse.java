@@ -21,10 +21,14 @@ public class ChatMessageResponse {
     private String productImage;
     private BigDecimal productPrice;
     private String content;
+    /** TEXT, IMAGE, OFFER, MEETUP, SYSTEM */
     private String messageType;
+    private String imageUrl;
     private BigDecimal offeredPrice;
     private String meetupLocation;
     private String meetupTime;
     private Boolean isRead;
     private String createdAt;
+    /** Thời điểm gửi dạng ISO (2026-11-16T10:20:30). */
+    private String sentAt;
 }

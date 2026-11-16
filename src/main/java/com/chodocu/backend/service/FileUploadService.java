@@ -8,16 +8,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -28,14 +28,25 @@ import java.util.UUID;
  *   app.supabase.service-key=<service_role key>   (đặt qua biến môi trường SUPABASE_SERVICE_KEY)
  *   app.supabase.storage-bucket=passuni
  *
- * Nếu chưa cấu hình service-key, hệ thống tự fallback lưu vào thư mục ./uploads
- * để dev vẫn chạy được (giống hành vi cũ).
+ * Nếu chưa cấu hình service-key (hoặc Supabase lỗi), ảnh được lưu vào thư mục ./uploads
+ * để môi trường dev vẫn chạy được.
  */
 @Service
 @Slf4j
 public class FileUploadService {
 
-    private static final String ALLOWED_TYPES = "image/jpeg,image/png,image/webp,image/gif";
+    /** Thư mục được phép: ảnh sản phẩm, ảnh đại diện, ảnh gửi trong chat. */
+    private static final Set<String> ALLOWED_FOLDERS = Set.of("products", "avatars", "chat");
+
+    /** Loại ảnh được phép -> đuôi file khi lưu (không dùng đuôi file người dùng gửi lên). */
+    private static final Map<String, String> EXTENSIONS = Map.of(
+            "image/jpeg", ".jpg",
+            "image/jpg", ".jpg", // một số app Android gửi "image/jpg"
+            "image/png", ".png",
+            "image/webp", ".webp",
+            "image/gif", ".gif"
+    );
+
     private static final long MAX_BYTES = 10L * 1024 * 1024;
 
     private final Path uploadDir = Paths.get("uploads");
@@ -56,36 +67,49 @@ public class FileUploadService {
     public FileUploadService() {
         try {
             Files.createDirectories(uploadDir);
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            log.warn("Không tạo được thư mục uploads: {}", e.getMessage());
         }
     }
 
     /**
-     * Lưu file và trả về URL công khai.
+     * Lưu ảnh và trả về URL công khai.
+     * Khi lưu local, kết quả là đường dẫn tương đối "/uploads/..." (controller ghép thêm domain).
      *
-     * @param file    file ảnh từ multipart
-     * @param baseUrl baseUrl của backend, dùng khi fallback local
-     * @param folder  thư mục logic: "avatars", "products"...
+     * @param folder "products", "avatars" hoặc "chat"
      */
-    public String storeFile(MultipartFile file, String baseUrl, String folder) {
-        validate(file);
-
-        String ext = extensionOf(file.getOriginalFilename());
-        String objectPath = folder + "/" + UUID.randomUUID() + ext;
+    public String storeFile(MultipartFile file, String folder) {
+        String extension = validate(file, folder);
+        String objectPath = folder + "/" + UUID.randomUUID() + extension;
 
         if (isSupabaseConfigured()) {
             try {
                 return uploadToSupabase(file, objectPath);
             } catch (Exception e) {
+                // Supabase lỗi thì vẫn lưu local để người dùng không mất ảnh
                 log.warn("Upload Supabase thất bại, chuyển sang lưu local: {}", e.getMessage());
             }
         }
-        return storeLocal(file, ext);
+        return storeLocal(file, objectPath);
     }
 
-    /** Giữ tương thích với code cũ. */
-    public String storeFile(MultipartFile file, String baseUrl) {
-        return storeFile(file, baseUrl, "uploads");
+    /** Kiểm tra thư mục và file, trả về đuôi file theo đúng loại ảnh. */
+    private String validate(MultipartFile file, String folder) {
+        if (folder == null || !ALLOWED_FOLDERS.contains(folder)) {
+            throw new BadRequestException("Thư mục upload không hợp lệ");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("Vui lòng chọn ảnh để tải lên");
+        }
+        if (file.getSize() > MAX_BYTES) {
+            throw new BadRequestException("Ảnh vượt quá dung lượng cho phép (10MB)");
+        }
+        String contentType = file.getContentType() != null ? file.getContentType().toLowerCase() : "";
+        String extension = EXTENSIONS.get(contentType);
+        if (extension == null) {
+            throw new BadRequestException("Chỉ chấp nhận ảnh JPEG, PNG, WEBP hoặc GIF");
+        }
+        return extension;
     }
 
     private boolean isSupabaseConfigured() {
@@ -93,37 +117,15 @@ public class FileUploadService {
                 && serviceKey != null && !serviceKey.isBlank();
     }
 
-    private void validate(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            throw new BadRequestException("File ảnh không hợp lệ");
-        }
-        if (file.getSize() > MAX_BYTES) {
-            throw new BadRequestException("Ảnh vượt quá 10MB");
-        }
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_TYPES.contains(contentType.toLowerCase())) {
-            throw new BadRequestException("Chỉ chấp nhận ảnh JPEG, PNG, WEBP hoặc GIF");
-        }
-    }
-
-    private String extensionOf(String originalName) {
-        if (originalName == null || !originalName.contains(".")) return ".jpg";
-        String ext = originalName.substring(originalName.lastIndexOf(".")).toLowerCase();
-        return ext.length() > 6 ? ".jpg" : ext;
-    }
-
     private String uploadToSupabase(MultipartFile file, String objectPath) throws IOException, InterruptedException {
-        String endpoint = String.format("%s/storage/v1/object/%s/%s",
-                stripTrailingSlash(supabaseUrl),
-                bucket,
-                encodePath(objectPath));
+        String baseUrl = stripTrailingSlash(supabaseUrl);
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(endpoint))
+                .uri(URI.create(baseUrl + "/storage/v1/object/" + bucket + "/" + objectPath))
                 .timeout(Duration.ofSeconds(30))
                 .header("Authorization", "Bearer " + serviceKey)
                 .header("apikey", serviceKey)
-                .header("Content-Type", file.getContentType() != null ? file.getContentType() : "image/jpeg")
+                .header("Content-Type", file.getContentType())
                 .header("x-upsert", "true")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(file.getBytes()))
                 .build();
@@ -132,32 +134,22 @@ public class FileUploadService {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IOException("Supabase trả về " + response.statusCode() + ": " + response.body());
         }
-
-        return String.format("%s/storage/v1/object/public/%s/%s",
-                stripTrailingSlash(supabaseUrl), bucket, encodePath(objectPath));
+        return baseUrl + "/storage/v1/object/public/" + bucket + "/" + objectPath;
     }
 
-    private String storeLocal(MultipartFile file, String ext) {
+    private String storeLocal(MultipartFile file, String objectPath) {
         try {
-            String fileName = UUID.randomUUID() + ext;
-            Path targetLocation = this.uploadDir.resolve(fileName);
-            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
-            // Trả về path tương đối; controller sẽ ghép baseUrl
-            return "/uploads/" + fileName;
-        } catch (IOException ex) {
-            throw new BadRequestException("Không thể lưu file ảnh: " + ex.getMessage());
+            Path target = uploadDir.resolve(objectPath);
+            Files.createDirectories(target.getParent());
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+            return "/uploads/" + objectPath;
+        } catch (IOException e) {
+            log.error("Không thể lưu ảnh local", e);
+            throw new BadRequestException("Không thể lưu ảnh, vui lòng thử lại");
         }
     }
 
     private String stripTrailingSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
-
-    private String encodePath(String path) {
-        return java.util.Arrays.stream(path.split("/"))
-                .map(seg -> URLEncoder.encode(seg, StandardCharsets.UTF_8).replace("+", "%20"))
-                .reduce((a, b) -> a + "/" + b)
-                .orElse(path);
-    }
 }
-

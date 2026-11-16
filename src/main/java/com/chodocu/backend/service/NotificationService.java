@@ -6,11 +6,11 @@ import com.chodocu.backend.entity.User;
 import com.chodocu.backend.exception.ResourceNotFoundException;
 import com.chodocu.backend.repository.NotificationRepository;
 import com.chodocu.backend.repository.UserRepository;
+import com.chodocu.backend.util.DisplayFormat;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -20,7 +20,6 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     public void createNotification(User user, String type, String title, String message, Long referenceId) {
         notificationRepository.save(Notification.builder()
@@ -33,33 +32,38 @@ public class NotificationService {
     }
 
     public List<NotificationResponse> getMyNotifications(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+        User user = findUser(email);
         return notificationRepository.findByUserIdOrderByCreatedAtDesc(user.getId())
                 .stream().map(this::toDto).collect(Collectors.toList());
     }
 
     public long getUnreadCount(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
-        return notificationRepository.countByUserIdAndIsReadFalse(user.getId());
+        return notificationRepository.countByUserIdAndIsReadFalse(findUser(email).getId());
     }
 
     @Transactional
     public void markAllRead(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
-        List<Notification> unread = notificationRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(user.getId());
+        List<Notification> unread =
+                notificationRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(findUser(email).getId());
         unread.forEach(n -> n.setIsRead(true));
         notificationRepository.saveAll(unread);
     }
 
+    /** Đánh dấu một thông báo đã đọc — chỉ chủ của thông báo mới làm được. */
     @Transactional
-    public void markRead(Long id) {
-        notificationRepository.findById(id).ifPresent(n -> {
-            n.setIsRead(true);
-            notificationRepository.save(n);
-        });
+    public void markRead(Long id, String email) {
+        User user = findUser(email);
+        notificationRepository.findById(id)
+                .filter(n -> n.getUser() != null && n.getUser().getId().equals(user.getId()))
+                .ifPresent(n -> {
+                    n.setIsRead(true);
+                    notificationRepository.save(n);
+                });
+    }
+
+    private User findUser(String email) {
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
     }
 
     private NotificationResponse toDto(Notification n) {
@@ -70,7 +74,8 @@ public class NotificationService {
                 .message(n.getMessage())
                 .referenceId(n.getReferenceId())
                 .isRead(n.getIsRead())
-                .createdAt(n.getCreatedAt() != null ? n.getCreatedAt().format(FORMATTER) : null)
+                .createdAt(DisplayFormat.dateTime(n.getCreatedAt()))
+                .createdAtIso(DisplayFormat.iso(n.getCreatedAt()))
                 .build();
     }
 }

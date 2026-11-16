@@ -41,8 +41,9 @@ public class NotificationController {
     }
 
     @PutMapping("/{id}/read")
-    public ResponseEntity<ApiResponse<Void>> markRead(@PathVariable Long id) {
-        notificationService.markRead(id);
+    public ResponseEntity<ApiResponse<Void>> markRead(@PathVariable Long id,
+                                                      @AuthenticationPrincipal CustomUserDetails currentUser) {
+        notificationService.markRead(id, currentUser.getEmail());
         return ResponseEntity.ok(ApiResponse.ok("Đã đánh dấu đã đọc", null));
     }
 }

@@ -40,5 +40,7 @@ public class ProductResponse {
     private UserSummaryDto seller;
     private List<String> imageUrls;
     private String createdAt;
+    /** Thời điểm đăng dạng ISO (2026-11-16T10:20:30) để app tự định dạng. */
+    private String createdAtIso;
     private String timeAgo;
 }

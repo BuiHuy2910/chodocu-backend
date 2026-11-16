@@ -34,7 +34,12 @@ public class OrderResponse {
     private BigDecimal finalBuyerAmount;
     private String cancelReason;
     private String disputeReason;
+    /** Ngày giờ dễ đọc theo giờ Việt Nam. */
     private String createdAt;
     private String updatedAt;
     private String completedAt;
+    /** Cùng các thời điểm trên nhưng dạng ISO giờ UTC (app dùng các trường này). */
+    private String createdAtIso;
+    private String updatedAtIso;
+    private String completedAtIso;
 }

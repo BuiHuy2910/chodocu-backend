@@ -1,5 +1,6 @@
 package com.chodocu.backend.entity;
 
+import com.chodocu.backend.enums.MessageType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -33,9 +34,13 @@ public class ChatMessage {
     @Column(nullable = false, length = 1000)
     private String content;
 
-    // TEXT, OFFER, MEETUP
+    /** Loại tin: TEXT, IMAGE, OFFER, MEETUP, SYSTEM (xem enum MessageType). */
     @Builder.Default
-    private String messageType = "TEXT";
+    private String messageType = MessageType.TEXT.name();
+
+    /** Ảnh đính kèm (chỉ có với tin IMAGE). */
+    @Column(length = 1000)
+    private String imageUrl;
 
     @Column(precision = 15, scale = 0)
     private BigDecimal offeredPrice;

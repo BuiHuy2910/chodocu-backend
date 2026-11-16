@@ -22,7 +22,6 @@ public class UserSummaryDto {
     private String dormArea;
     private String role;
     private String bio;
-    private Boolean verifiedStudent;
     private Boolean active;
     private Double rating;
     private Integer completedDeals;

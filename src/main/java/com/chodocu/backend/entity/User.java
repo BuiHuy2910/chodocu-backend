@@ -48,6 +48,7 @@ public class User {
     @Builder.Default
     private Role role = Role.STUDENT;
 
+    /** Cột cũ, không còn dùng: app đã bỏ bước xác thực email sinh viên (giữ lại để khớp bảng users). */
     @Builder.Default
     private Boolean verifiedStudent = true;
 

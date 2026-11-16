@@ -1,7 +1,7 @@
 package com.chodocu.backend.enums;
 
 /**
- * Vòng đời đơn hàng trên sàn PassUni.
+ * Vòng đời đơn hàng trên Chợ Đồ Cũ.
  *
  * PENDING   : Người mua gửi yêu cầu đặt mua / hẹn gặp → chờ người bán duyệt
  * ACCEPTED  : Người bán đã duyệt → sản phẩm chuyển IN_TRANSACTION

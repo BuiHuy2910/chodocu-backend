@@ -7,5 +7,8 @@ import java.util.List;
 
 public interface ModerationLogRepository extends JpaRepository<ModerationLog, Long> {
     List<ModerationLog> findByProductIdOrderByCreatedAtDesc(Long productId);
+
     List<ModerationLog> findTop100ByOrderByCreatedAtDesc();
+
+    void deleteByProductId(Long productId);
 }

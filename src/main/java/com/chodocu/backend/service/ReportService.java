@@ -9,12 +9,11 @@ import com.chodocu.backend.exception.ResourceNotFoundException;
 import com.chodocu.backend.repository.ProductRepository;
 import com.chodocu.backend.repository.ReportRepository;
 import com.chodocu.backend.repository.UserRepository;
+import com.chodocu.backend.util.DisplayFormat;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -25,7 +24,6 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     @Transactional
     public ReportResponse createReport(ReportRequest request, String reporterEmail) {
@@ -59,7 +57,7 @@ public class ReportService {
         report.setStatus(action); // RESOLVED or DISMISSED
         report.setAdminNote(adminNote);
         report.setResolvedBy(admin);
-        report.setResolvedAt(LocalDateTime.now());
+        report.setResolvedAt(DisplayFormat.nowUtc());
         return toDto(reportRepository.save(report));
     }
 
@@ -76,7 +74,7 @@ public class ReportService {
                 .detail(r.getDetail())
                 .status(r.getStatus())
                 .adminNote(r.getAdminNote())
-                .createdAt(r.getCreatedAt() != null ? r.getCreatedAt().format(FORMATTER) : null)
+                .createdAt(DisplayFormat.dateTime(r.getCreatedAt()))
                 .build();
     }
 }

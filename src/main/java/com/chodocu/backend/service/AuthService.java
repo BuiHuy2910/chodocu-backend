@@ -1,6 +1,7 @@
 package com.chodocu.backend.service;
 
 import com.chodocu.backend.dto.auth.AuthResponse;
+import com.chodocu.backend.dto.auth.ChangePasswordRequest;
 import com.chodocu.backend.dto.auth.LoginRequest;
 import com.chodocu.backend.dto.auth.RegisterRequest;
 import com.chodocu.backend.dto.auth.UpdateProfileRequest;
@@ -16,11 +17,14 @@ import com.chodocu.backend.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
+/**
+ * Đăng ký, đăng nhập và quản lý hồ sơ cá nhân.
+ */
 @Service
 @RequiredArgsConstructor
 public class AuthService {
@@ -32,63 +36,103 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final DtoMapper dtoMapper;
 
+    /** Tạo tài khoản mới rồi trả token để người dùng vào app ngay. */
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        String email = request.getEmail().trim().toLowerCase();
+        String email = normalizeEmail(request.getEmail());
         if (userRepository.existsByEmail(email)) {
-            throw new BadRequestException("Email sinh viên này đã được đăng ký!");
+            throw new BadRequestException("Email này đã được đăng ký");
         }
-
-        University university = null;
-        if (request.getUniversityId() != null) {
-            university = universityRepository.findById(request.getUniversityId()).orElse(null);
-        }
-        if (university == null) {
-            university = universityRepository.findAll().stream().findFirst().orElse(null);
-        }
-
-        boolean isEduEmail = email.endsWith(".edu.vn") || email.contains(".edu.");
 
         User user = User.builder()
                 .fullName(request.getFullName().trim())
                 .email(email)
                 .password(passwordEncoder.encode(request.getPassword()))
-                .studentId(request.getStudentId() != null ? request.getStudentId() : "SV" + (System.currentTimeMillis() % 100000))
-                .phone(request.getPhone())
-                .university(university)
-                .dormArea(request.getDormArea() != null && !request.getDormArea().isBlank()
-                        ? request.getDormArea() : "KTX Khu B - ĐHQG")
-                .avatarUrl("https://api.dicebear.com/7.x/notionists/svg?seed=" + email)
+                .phone(request.getPhone().trim())
+                .university(findUniversity(request.getUniversityId()))
                 .role(Role.STUDENT)
-                .verifiedStudent(isEduEmail || request.getStudentId() != null)
                 .active(true)
-                .rating(5.0)
-                .completedDeals(0)
                 .build();
 
-        User saved = userRepository.save(user);
-        String token = jwtTokenProvider.generateTokenFromEmail(saved.getEmail(), saved.getId(), saved.getRole().name());
-
-        return AuthResponse.builder()
-                .accessToken(token)
-                .tokenType("Bearer")
-                .user(dtoMapper.toUserSummary(saved))
-                .build();
+        return buildAuthResponse(userRepository.save(user));
     }
 
+    /**
+     * Đăng nhập bằng email + mật khẩu.
+     * Sai thông tin -> BadCredentialsException (401), tài khoản bị khóa -> LockedException (403).
+     */
     public AuthResponse login(LoginRequest request) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getEmail().trim().toLowerCase(), request.getPassword())
-        );
+        String email = normalizeEmail(request.getEmail());
+        authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(email, request.getPassword()));
+        return buildAuthResponse(findUserByEmail(email));
+    }
 
-        String token = jwtTokenProvider.generateToken(authentication);
-        User user = userRepository.findByEmail(request.getEmail().trim().toLowerCase())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+    public UserSummaryDto getCurrentUser(String email) {
+        return dtoMapper.toUserSummary(findUserByEmail(email));
+    }
 
-        if (!Boolean.TRUE.equals(user.getActive())) {
-            throw new BadRequestException("Tài khoản của bạn đã bị khóa bởi Quản trị viên");
+    /** Cập nhật hồ sơ: chỉ thay đổi những trường được gửi lên. */
+    @Transactional
+    public UserSummaryDto updateProfile(UpdateProfileRequest request, String email) {
+        User user = findUserByEmail(email);
+
+        if (StringUtils.hasText(request.getFullName())) {
+            user.setFullName(request.getFullName().trim());
         }
+        if (StringUtils.hasText(request.getPhone())) {
+            user.setPhone(validatePhone(request.getPhone()));
+        }
+        if (request.getDormArea() != null) {
+            user.setDormArea(blankToNull(request.getDormArea()));
+        }
+        if (request.getBio() != null) {
+            user.setBio(blankToNull(request.getBio()));
+        }
+        if (StringUtils.hasText(request.getAvatarUrl())) {
+            String url = request.getAvatarUrl().trim();
+            if (!isWebUrl(url)) {
+                throw new BadRequestException("Đường dẫn ảnh không hợp lệ, vui lòng tải ảnh lên lại.");
+            }
+            user.setAvatarUrl(url);
+        }
+        if (request.getUniversityId() != null) {
+            user.setUniversity(findUniversity(request.getUniversityId()));
+        }
+        return dtoMapper.toUserSummary(userRepository.save(user));
+    }
 
+    /** Đổi ảnh đại diện; avatarUrl rỗng nghĩa là gỡ ảnh (giống hàm api_update_avatar trong SQL). */
+    @Transactional
+    public UserSummaryDto updateAvatar(String email, String avatarUrl) {
+        User user = findUserByEmail(email);
+        String url = blankToNull(avatarUrl);
+        if (url != null && !isWebUrl(url)) {
+            throw new BadRequestException("Đường dẫn ảnh không hợp lệ, vui lòng tải ảnh lên lại.");
+        }
+        user.setAvatarUrl(url);
+        return dtoMapper.toUserSummary(userRepository.save(user));
+    }
+
+    /** Đổi mật khẩu: bắt buộc nhập đúng mật khẩu hiện tại. */
+    @Transactional
+    public void changePassword(String email, ChangePasswordRequest request) {
+        User user = findUserByEmail(email);
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
+            throw new BadRequestException("Mật khẩu hiện tại không đúng");
+        }
+        if (request.getCurrentPassword().equals(request.getNewPassword())) {
+            throw new BadRequestException("Mật khẩu mới phải khác mật khẩu hiện tại");
+        }
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+    }
+
+    // ----------------------------------------------------------------
+    // Hàm hỗ trợ
+    // ----------------------------------------------------------------
+
+    private AuthResponse buildAuthResponse(User user) {
+        String token = jwtTokenProvider.generateTokenFromEmail(user.getEmail(), user.getId(), user.getRole().name());
         return AuthResponse.builder()
                 .accessToken(token)
                 .tokenType("Bearer")
@@ -96,61 +140,35 @@ public class AuthService {
                 .build();
     }
 
-    public UserSummaryDto getCurrentUser(String email) {
-        User user = userRepository.findByEmail(email)
+    private User findUserByEmail(String email) {
+        return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản"));
-        return dtoMapper.toUserSummary(user);
     }
 
-    public UserSummaryDto getProfile(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
-        return dtoMapper.toUserSummary(user);
+    private University findUniversity(Long universityId) {
+        return universityRepository.findById(universityId)
+                .orElseThrow(() -> new ResourceNotFoundException("Trường / khu vực không tồn tại"));
     }
 
-    @Transactional
-    public UserSummaryDto updateProfile(UpdateProfileRequest request, String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
-        if (request.getFullName() != null && !request.getFullName().isBlank()) {
-            user.setFullName(request.getFullName().trim());
+    private String validatePhone(String phone) {
+        String trimmed = phone.trim();
+        if (!trimmed.matches(RegisterRequest.PHONE_REGEX)) {
+            throw new BadRequestException("Số điện thoại không hợp lệ");
         }
-        if (request.getPhone() != null) user.setPhone(request.getPhone());
-        if (request.getDormArea() != null) user.setDormArea(request.getDormArea());
-        if (request.getAvatarUrl() != null && !request.getAvatarUrl().isBlank()) {
-            user.setAvatarUrl(request.getAvatarUrl());
-        }
-        if (request.getBio() != null) user.setBio(request.getBio());
-        if (request.getUniversityId() != null) {
-            universityRepository.findById(request.getUniversityId()).ifPresent(user::setUniversity);
-        }
-        return dtoMapper.toUserSummary(userRepository.save(user));
+        return trimmed;
     }
 
-    /** Chỉ cập nhật avatar — dùng cho nút "Đổi ảnh đại diện" ở app. */
-    @Transactional
-    public UserSummaryDto updateAvatar(String email, String avatarUrl) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
-        user.setAvatarUrl(avatarUrl);
-        return dtoMapper.toUserSummary(userRepository.save(user));
+    private String normalizeEmail(String email) {
+        return email.trim().toLowerCase();
     }
 
-    /**
-     * Legacy updateProfile — kept for backward compatibility with existing callers.
-     */
-    @Transactional
-    public UserSummaryDto updateProfile(String email, String fullName, String phone, String dormArea, Long universityId) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản"));
+    private String blankToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
 
-        if (fullName != null && !fullName.isBlank()) user.setFullName(fullName.trim());
-        if (phone != null) user.setPhone(phone.trim());
-        if (dormArea != null) user.setDormArea(dormArea.trim());
-        if (universityId != null) {
-            universityRepository.findById(universityId).ifPresent(user::setUniversity);
-        }
-
-        return dtoMapper.toUserSummary(userRepository.save(user));
+    /** Link ảnh phải là http(s) do máy chủ upload trả về, tối đa 1000 ký tự. */
+    private boolean isWebUrl(String url) {
+        String lower = url.toLowerCase();
+        return (lower.startsWith("http://") || lower.startsWith("https://")) && url.length() <= 1000;
     }
 }

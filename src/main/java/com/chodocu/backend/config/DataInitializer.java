@@ -37,13 +37,14 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) {
         seedPlatformConfig();
+        clearGeneratedAvatars();
 
         if (categoryRepository.count() > 0) {
             log.info("Database đã có dữ liệu mẫu. Bỏ qua bước khởi tạo.");
             return;
         }
 
-        log.info("Đang khởi tạo dữ liệu mẫu Chợ Đồ Cũ Sinh Viên (PassUni) trên Supabase...");
+        log.info("Đang khởi tạo dữ liệu mẫu Chợ Đồ Cũ Sinh Viên...");
 
         // 1. Tạo danh sách Trường Đại học & Khu KTX
         University ktxKhuB = universityRepository.save(University.builder()
@@ -133,14 +134,13 @@ public class DataInitializer implements CommandLineRunner {
         User admin = userRepository.save(User.builder()
                 .email("admin@chodocu.edu.vn")
                 .password(passwordEncoder.encode("admin123"))
-                .fullName("Ban Quản Trị PassUni")
+                .fullName("Ban Quản Trị Chợ Đồ Cũ")
                 .studentId("ADMIN01")
                 .phone("0901234567")
                 .university(ktxKhuB)
                 .dormArea("Trung tâm Quản lý KTX ĐHQG")
                 .avatarUrl("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80")
                 .role(Role.ADMIN)
-                .verifiedStudent(true)
                 .active(true)
                 .rating(5.0)
                 .completedDeals(99)
@@ -156,7 +156,6 @@ public class DataInitializer implements CommandLineRunner {
                 .dormArea("Tòa BA1 - KTX Khu B")
                 .avatarUrl("https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80")
                 .role(Role.STUDENT)
-                .verifiedStudent(true)
                 .active(true)
                 .rating(4.9)
                 .completedDeals(12)
@@ -172,7 +171,6 @@ public class DataInitializer implements CommandLineRunner {
                 .dormArea("Tòa BA1 - KTX Khu B")
                 .avatarUrl("https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80")
                 .role(Role.STUDENT)
-                .verifiedStudent(true)
                 .active(true)
                 .rating(4.9)
                 .completedDeals(24)
@@ -188,7 +186,6 @@ public class DataInitializer implements CommandLineRunner {
                 .dormArea("Tòa C2 - KTX Khu B")
                 .avatarUrl("https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200&auto=format&fit=crop&q=80")
                 .role(Role.STUDENT)
-                .verifiedStudent(true)
                 .active(true)
                 .rating(4.8)
                 .completedDeals(9)
@@ -204,7 +201,6 @@ public class DataInitializer implements CommandLineRunner {
                 .dormArea("Tòa D5 - KTX Khu A")
                 .avatarUrl("https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&auto=format&fit=crop&q=80")
                 .role(Role.STUDENT)
-                .verifiedStudent(true)
                 .active(true)
                 .rating(5.0)
                 .completedDeals(15)
@@ -525,7 +521,15 @@ public class DataInitializer implements CommandLineRunner {
                 .isRead(false)
                 .build());
 
-        log.info("Hoàn tất khởi tạo dữ liệu mẫu Chợ Đồ Cũ Sinh Viên (PassUni)!");
+        log.info("Hoàn tất khởi tạo dữ liệu mẫu Chợ Đồ Cũ Sinh Viên!");
+    }
+
+    /** Xóa avatar tự sinh (dicebear / pravatar) còn sót từ dữ liệu cũ -> app hiện chữ cái đầu tên. */
+    private void clearGeneratedAvatars() {
+        int cleared = userRepository.clearGeneratedAvatars();
+        if (cleared > 0) {
+            log.info("Đã xóa {} avatar tự sinh khỏi tài khoản người dùng.", cleared);
+        }
     }
 
     /**
@@ -542,7 +546,7 @@ public class DataInitializer implements CommandLineRunner {
         seedSetting("post_require_approval", "true", "Bài đăng phải chờ admin duyệt");
         seedSetting("max_images_per_post", "5", "Số ảnh tối đa mỗi bài đăng");
         seedSetting("order_auto_cancel_hours", "72", "Tự hủy đơn PENDING sau N giờ");
-        seedSetting("app_name", "PassUni", "Tên ứng dụng hiển thị");
+        seedSetting("app_name", "Chợ Đồ Cũ", "Tên ứng dụng hiển thị");
 
         if (platformFeeTierRepository.count() == 0) {
             platformFeeTierRepository.save(PlatformFeeTier.builder()

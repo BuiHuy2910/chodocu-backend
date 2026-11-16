@@ -89,7 +89,7 @@ public class OrderController {
             @RequestBody(required = false) Map<String, String> body,
             @AuthenticationPrincipal CustomUserDetails currentUser
     ) {
-        String reason = body != null ? body.get("reason") : "Không có mô tả chi tiết";
+        String reason = body != null ? body.get("reason") : null;
         OrderResponse updated = orderService.disputeOrder(id, currentUser.getEmail(), reason);
         return ResponseEntity.ok(ApiResponse.ok("Đã gửi báo cáo tranh chấp tới admin.", updated));
     }

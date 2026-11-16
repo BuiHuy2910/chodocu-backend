@@ -14,13 +14,13 @@ import com.chodocu.backend.repository.PlatformFeeTierRepository;
 import com.chodocu.backend.repository.PlatformSettingRepository;
 import com.chodocu.backend.repository.TransactionRepository;
 import com.chodocu.backend.repository.UserRepository;
+import com.chodocu.backend.util.DisplayFormat;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
@@ -34,7 +34,6 @@ public class PlatformSettingService {
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
 
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     public static final String FEE_RATE = "platform_fee_rate";
     public static final String MIN_FEE = "min_platform_fee";
@@ -167,7 +166,7 @@ public class PlatformSettingService {
                         .key(s.getKey())
                         .value(s.getValue())
                         .description(s.getDescription())
-                        .updatedAt(s.getUpdatedAt() != null ? s.getUpdatedAt().format(FORMATTER) : null)
+                        .updatedAt(DisplayFormat.dateTime(s.getUpdatedAt()))
                         .updatedBy(s.getUpdatedBy() != null ? s.getUpdatedBy().getFullName() : null)
                         .build())
                 .collect(Collectors.toList());
@@ -226,7 +225,7 @@ public class PlatformSettingService {
                 .key(s.getKey())
                 .value(s.getValue())
                 .description(s.getDescription())
-                .updatedAt(s.getUpdatedAt() != null ? s.getUpdatedAt().format(FORMATTER) : null)
+                .updatedAt(DisplayFormat.dateTime(s.getUpdatedAt()))
                 .updatedBy(s.getUpdatedBy() != null ? s.getUpdatedBy().getFullName() : null)
                 .build();
     }
@@ -299,7 +298,7 @@ public class PlatformSettingService {
                         .platformFeeRate(t.getPlatformFeeRate())
                         .platformFeeAmount(t.getPlatformFeeAmount())
                         .sellerReceiveAmount(t.getSellerReceiveAmount())
-                        .createdAt(t.getCreatedAt() != null ? t.getCreatedAt().format(FORMATTER) : null)
+                        .createdAt(DisplayFormat.dateTime(t.getCreatedAt()))
                         .build())
                 .collect(Collectors.toList());
 

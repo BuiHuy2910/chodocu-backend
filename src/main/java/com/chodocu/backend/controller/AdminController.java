@@ -8,10 +8,13 @@ import com.chodocu.backend.dto.order.OrderResponse;
 import com.chodocu.backend.dto.product.ProductResponse;
 import com.chodocu.backend.enums.OrderStatus;
 import com.chodocu.backend.enums.ProductStatus;
+import com.chodocu.backend.exception.BadRequestException;
 import com.chodocu.backend.security.CustomUserDetails;
 import com.chodocu.backend.service.*;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,10 +22,20 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * API trang quản trị.
+ *
+ * ADMIN và MODERATOR đều vào được (xem SecurityConfig):
+ * - Kiểm duyệt viên (MODERATOR): thống kê, duyệt / từ chối / ẩn tin, nhật ký kiểm duyệt, báo cáo vi phạm.
+ * - Chỉ ADMIN (gắn {@code @PreAuthorize(ADMIN_ONLY)}): xóa tin, đơn hàng, người dùng, phân quyền,
+ *   bậc phí, cài đặt và tài chính — khớp với các mục "chỉ admin" trên giao diện quản trị.
+ */
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 public class AdminController {
+
+    private static final String ADMIN_ONLY = "hasRole('ADMIN')";
 
     private final AdminService adminService;
     private final ProductService productService;
@@ -35,11 +48,24 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Thống kê hệ thống", adminService.getDashboardStats()));
     }
 
+    // --- Kiểm duyệt tin đăng ---
+
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<List<ProductResponse>>> getAllProducts(
             @RequestParam(required = false) ProductStatus status
     ) {
         return ResponseEntity.ok(ApiResponse.ok("Danh sách tin đăng quản trị", adminService.getAllProductsForAdmin(status)));
+    }
+
+    @GetMapping("/products/{id}")
+    public ResponseEntity<ApiResponse<ProductResponse>> getProduct(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok("Chi tiết tin đăng", adminService.getProductForAdmin(id)));
+    }
+
+    /** Lịch sử kiểm duyệt của 1 tin, mới nhất trước. */
+    @GetMapping("/products/{id}/logs")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getProductLogs(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok("Lịch sử kiểm duyệt", adminService.getProductLogs(id)));
     }
 
     @PutMapping("/products/{id}/approve")
@@ -49,6 +75,7 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Đã duyệt tin đăng thành công!", adminService.approveProduct(id, currentUser.getEmail())));
     }
 
+    /** Body: {"reason": "..."} — lý do là bắt buộc. */
     @PutMapping("/products/{id}/reject")
     public ResponseEntity<ApiResponse<ProductResponse>> rejectProduct(
             @PathVariable Long id,
@@ -59,6 +86,27 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Đã từ chối tin đăng!", adminService.rejectProduct(id, reason, currentUser.getEmail())));
     }
 
+    /** Duyệt nhiều tin. Trả về {processed, skipped}. */
+    @PutMapping("/products/bulk-approve")
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> bulkApprove(
+            @Valid @RequestBody BulkModerationRequest request,
+            @AuthenticationPrincipal CustomUserDetails currentUser
+    ) {
+        Map<String, Integer> result = adminService.bulkApprove(request.getIds(), currentUser.getEmail());
+        return ResponseEntity.ok(ApiResponse.ok("Đã duyệt " + result.get("processed") + " tin đăng", result));
+    }
+
+    /** Từ chối nhiều tin với cùng một lý do. Trả về {processed, skipped}. */
+    @PutMapping("/products/bulk-reject")
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> bulkReject(
+            @Valid @RequestBody BulkModerationRequest request,
+            @AuthenticationPrincipal CustomUserDetails currentUser
+    ) {
+        Map<String, Integer> result = adminService.bulkReject(request.getIds(), request.getReason(), currentUser.getEmail());
+        return ResponseEntity.ok(ApiResponse.ok("Đã từ chối " + result.get("processed") + " tin đăng", result));
+    }
+
+    @PreAuthorize(ADMIN_ONLY)
     @DeleteMapping("/products/{id}")
     public ResponseEntity<ApiResponse<Void>> deleteProduct(
             @PathVariable Long id,
@@ -86,7 +134,9 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Nhật ký kiểm duyệt", adminService.getModerationLogs()));
     }
 
-    // --- Orders (quản lý toàn bộ đơn hàng) ---
+    // --- Đơn hàng (chỉ ADMIN) ---
+
+    @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/orders")
     public ResponseEntity<ApiResponse<List<OrderResponse>>> getAllOrders(
             @RequestParam(required = false) OrderStatus status
@@ -94,38 +144,40 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Danh sách đơn hàng", adminService.getAllOrders(status)));
     }
 
+    /** Body: {"status": "CANCELLED", "note": "..."} */
+    @PreAuthorize(ADMIN_ONLY)
     @PutMapping("/orders/{id}/status")
     public ResponseEntity<ApiResponse<OrderResponse>> updateOrderStatus(
             @PathVariable Long id,
             @RequestBody Map<String, String> body,
             @AuthenticationPrincipal CustomUserDetails currentUser
     ) {
-        OrderStatus target;
-        try {
-            target = OrderStatus.valueOf(body.getOrDefault("status", "").toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("Trạng thái đơn không hợp lệ"));
-        }
-        OrderResponse updated = orderService.adminUpdateStatus(id, target, body.get("note"), currentUser.getEmail());
+        OrderResponse updated = orderService.adminUpdateStatus(
+                id, parseOrderStatus(body.get("status")), body.get("note"), currentUser.getEmail());
         return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật trạng thái đơn hàng!", updated));
     }
 
-    // --- Fee tiers (bậc phí sàn) ---
+    // --- Bậc phí sàn (chỉ ADMIN) ---
+
+    @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/fee-tiers")
     public ResponseEntity<ApiResponse<List<FeeTierDto>>> getFeeTiers() {
         return ResponseEntity.ok(ApiResponse.ok("Bậc phí sàn", platformSettingService.getAllFeeTiers()));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
     @PostMapping("/fee-tiers")
     public ResponseEntity<ApiResponse<FeeTierDto>> createFeeTier(@RequestBody FeeTierDto dto) {
         return ResponseEntity.ok(ApiResponse.ok("Đã thêm bậc phí!", platformSettingService.saveFeeTier(null, dto)));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
     @PutMapping("/fee-tiers/{id}")
     public ResponseEntity<ApiResponse<FeeTierDto>> updateFeeTier(@PathVariable Long id, @RequestBody FeeTierDto dto) {
         return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật bậc phí!", platformSettingService.saveFeeTier(id, dto)));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
     @DeleteMapping("/fee-tiers/{id}")
     public ResponseEntity<ApiResponse<Void>> deleteFeeTier(@PathVariable Long id) {
         platformSettingService.deleteFeeTier(id);
@@ -133,16 +185,21 @@ public class AdminController {
     }
 
     /** Xem trước phí sàn — dùng cho bảng mô phỏng ở admin. */
+    @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/fee/preview")
     public ResponseEntity<ApiResponse<FeeCalculationResponse>> previewFee(@RequestParam BigDecimal amount) {
         return ResponseEntity.ok(ApiResponse.ok("Xem trước phí sàn", platformSettingService.calculate(amount)));
     }
 
+    // --- Người dùng (chỉ ADMIN) ---
+
+    @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/users")
     public ResponseEntity<ApiResponse<List<UserSummaryDto>>> getAllUsers() {
         return ResponseEntity.ok(ApiResponse.ok("Danh sách tài khoản sinh viên", adminService.getAllUsers()));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
     @PutMapping("/users/{id}/toggle-active")
     public ResponseEntity<ApiResponse<UserSummaryDto>> toggleUserActive(@PathVariable Long id) {
         UserSummaryDto updated = adminService.toggleUserActive(id);
@@ -150,12 +207,7 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(msg, updated));
     }
 
-    @PutMapping("/users/{id}/toggle-verified")
-    public ResponseEntity<ApiResponse<UserSummaryDto>> toggleUserVerified(@PathVariable Long id) {
-        UserSummaryDto updated = adminService.toggleUserVerified(id);
-        return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật trạng thái xác thực sinh viên!", updated));
-    }
-
+    @PreAuthorize(ADMIN_ONLY)
     @PutMapping("/users/{id}/role")
     public ResponseEntity<ApiResponse<UserSummaryDto>> changeUserRole(
             @PathVariable Long id,
@@ -164,12 +216,15 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật phân quyền!", updated));
     }
 
-    // --- Platform Settings / Fee Config ---
+    // --- Cài đặt hệ thống & tài chính (chỉ ADMIN) ---
+
+    @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/settings")
     public ResponseEntity<ApiResponse<List<PlatformSettingDto>>> getSettings() {
         return ResponseEntity.ok(ApiResponse.ok("Cài đặt hệ thống", platformSettingService.getAllSettings()));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
     @PutMapping("/settings/{key}")
     public ResponseEntity<ApiResponse<PlatformSettingDto>> updateSetting(
             @PathVariable String key,
@@ -180,12 +235,14 @@ public class AdminController {
                 platformSettingService.updateSetting(key, body.get("value"), currentUser.getEmail())));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/financial")
     public ResponseEntity<ApiResponse<FinancialSummaryResponse>> getFinancial() {
         return ResponseEntity.ok(ApiResponse.ok("Tổng quan tài chính", platformSettingService.getFinancialSummary()));
     }
 
-    // --- Reports ---
+    // --- Báo cáo vi phạm ---
+
     @GetMapping("/reports")
     public ResponseEntity<ApiResponse<List<ReportResponse>>> getReports(
             @RequestParam(required = false, defaultValue = "ALL") String status
@@ -203,5 +260,13 @@ public class AdminController {
         String note = body.getOrDefault("note", "");
         return ResponseEntity.ok(ApiResponse.ok("Đã xử lý báo cáo!",
                 reportService.resolveReport(id, note, action, currentUser.getEmail())));
+    }
+
+    private OrderStatus parseOrderStatus(String raw) {
+        try {
+            return OrderStatus.valueOf(String.valueOf(raw).trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestException("Trạng thái đơn không hợp lệ");
+        }
     }
 }

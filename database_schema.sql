@@ -1,11 +1,12 @@
 -- =================================================================================
--- PASSUNI — CHỢ ĐỒ CŨ SINH VIÊN
+-- CHỢ ĐỒ CŨ SINH VIÊN — "Cũ người mới ta"
 -- DATABASE SCHEMA (BẢN DUY NHẤT — dùng cho cả cài mới và nâng cấp)
 -- Supabase PostgreSQL
 --
--- Cách chạy:
+-- Cách chạy (theo đúng thứ tự):
 --   psql "$SUPABASE_DB_URL" -f database_schema.sql
---   psql "$SUPABASE_DB_URL" -f seed_data.sql      -- (tuỳ chọn) dữ liệu mẫu
+--   psql "$SUPABASE_DB_URL" -f seed_data.sql              -- (tuỳ chọn) dữ liệu mẫu
+--   psql "$SUPABASE_DB_URL" -f supabase_direct_setup.sql  -- RPC cho app gọi thẳng Supabase
 --
 -- Ghi chú: file này idempotent (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS),
 -- chạy lại nhiều lần không lỗi và không mất dữ liệu hiện có.
@@ -106,9 +107,12 @@ ALTER TABLE products ADD CONSTRAINT chk_products_status
     CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'IN_TRANSACTION', 'SOLD', 'HIDDEN'));
 
 CREATE TABLE IF NOT EXISTS product_images (
+    id BIGSERIAL PRIMARY KEY,                   -- giữ đúng thứ tự ảnh (ảnh đầu tiên = ảnh bìa)
     product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     image_url VARCHAR(1000) NOT NULL
 );
+-- Nâng cấp DB cũ: bảng ảnh chưa có cột id
+ALTER TABLE product_images ADD COLUMN IF NOT EXISTS id BIGSERIAL PRIMARY KEY;
 
 -- =================================================================================
 -- 4. PHÍ SÀN THEO BẬC (admin cấu hình)
@@ -234,7 +238,7 @@ INSERT INTO platform_settings (setting_key, value, description) VALUES
 ('post_require_approval',   'true',   'Bài đăng phải chờ admin duyệt trước khi hiển thị'),
 ('max_images_per_post',     '5',      'Số ảnh tối đa mỗi bài đăng'),
 ('order_auto_cancel_hours', '72',     'Tự động hủy đơn PENDING sau N giờ (0 = tắt)'),
-('app_name',                'PassUni','Tên ứng dụng hiển thị')
+('app_name',                'Chợ Đồ Cũ','Tên ứng dụng hiển thị')
 ON CONFLICT (setting_key) DO NOTHING;
 
 -- Bậc phí mặc định (chỉ chèn khi bảng còn rỗng)
@@ -263,14 +267,22 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     sender_id BIGINT NOT NULL REFERENCES users(id),
     receiver_id BIGINT NOT NULL REFERENCES users(id),
     product_id BIGINT REFERENCES products(id) ON DELETE SET NULL,
-    content VARCHAR(1000) NOT NULL,
-    message_type VARCHAR(30) DEFAULT 'TEXT',   -- TEXT | OFFER | MEETUP
+    content VARCHAR(1000) NOT NULL,             -- tin ảnh không có chú thích thì để chuỗi rỗng
+    message_type VARCHAR(30) DEFAULT 'TEXT',   -- TEXT | IMAGE | OFFER | MEETUP | SYSTEM
+    image_url VARCHAR(1000),                    -- chỉ có với tin IMAGE
     offered_price NUMERIC(15, 0),
     meetup_location VARCHAR(255),
-    meetup_time VARCHAR(100),
+    meetup_time VARCHAR(100),                   -- "yyyy-MM-ddTHH:mm" theo giờ Việt Nam
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+-- Nâng cấp DB cũ: thêm cột ảnh và giới hạn loại tin nhắn
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS image_url VARCHAR(1000);
+UPDATE chat_messages SET message_type = 'TEXT' WHERE message_type IS NULL
+    OR message_type NOT IN ('TEXT', 'IMAGE', 'OFFER', 'MEETUP', 'SYSTEM');
+ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS chk_chat_messages_type;
+ALTER TABLE chat_messages ADD CONSTRAINT chk_chat_messages_type
+    CHECK (message_type IN ('TEXT', 'IMAGE', 'OFFER', 'MEETUP', 'SYSTEM'));
 
 CREATE TABLE IF NOT EXISTS notifications (
     id BIGSERIAL PRIMARY KEY,
@@ -344,6 +356,12 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user   ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status       ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_chat_sender          ON chat_messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_chat_receiver        ON chat_messages(receiver_id);
+CREATE INDEX IF NOT EXISTS idx_chat_pair            ON chat_messages(sender_id, receiver_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_unread          ON chat_messages(receiver_id) WHERE is_read = FALSE;
+CREATE INDEX IF NOT EXISTS idx_product_images       ON product_images(product_id, id);
+CREATE INDEX IF NOT EXISTS idx_products_university  ON products(university_id);
+CREATE INDEX IF NOT EXISTS idx_wishlists_user       ON wishlists(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id) WHERE is_read = FALSE;
 CREATE INDEX IF NOT EXISTS idx_fee_tiers_active     ON platform_fee_tiers(active, priority DESC);
 CREATE INDEX IF NOT EXISTS idx_moderation_product   ON moderation_logs(product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_moderation_admin     ON moderation_logs(admin_id, created_at DESC);
