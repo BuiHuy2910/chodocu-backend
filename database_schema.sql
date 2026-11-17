@@ -295,6 +295,16 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS device_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(500) NOT NULL UNIQUE,
+    platform VARCHAR(30) NOT NULL DEFAULT 'ANDROID',
+    package_name VARCHAR(120),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS reviews (
     id BIGSERIAL PRIMARY KEY,
     order_id BIGINT NOT NULL REFERENCES order_requests(id) ON DELETE CASCADE,
@@ -353,6 +363,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_payment       ON order_requests(payment_st
 CREATE INDEX IF NOT EXISTS idx_transactions_seller  ON transactions(seller_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user   ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_device_tokens_user   ON device_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status       ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_chat_sender          ON chat_messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_chat_receiver        ON chat_messages(receiver_id);

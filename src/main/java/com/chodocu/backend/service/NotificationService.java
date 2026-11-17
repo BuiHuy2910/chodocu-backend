@@ -11,7 +11,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -21,6 +23,7 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final FcmPushService fcmPushService;
 
     @Transactional
     public void createNotification(User user, String type, String title, String message, Long referenceId) {
@@ -31,6 +34,13 @@ public class NotificationService {
                 .message(message)
                 .referenceId(referenceId)
                 .build());
+
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("type", type != null ? type : "GENERAL");
+        if (referenceId != null) {
+            data.put("referenceId", String.valueOf(referenceId));
+        }
+        fcmPushService.pushAfterCommit(user.getId(), title, message, data);
     }
 
     public List<NotificationResponse> getMyNotifications(String email) {

@@ -1,9 +1,12 @@
 package com.chodocu.backend.controller;
 
 import com.chodocu.backend.dto.ApiResponse;
+import com.chodocu.backend.dto.DeviceTokenRequest;
 import com.chodocu.backend.dto.NotificationResponse;
 import com.chodocu.backend.security.CustomUserDetails;
+import com.chodocu.backend.service.FcmPushService;
 import com.chodocu.backend.service.NotificationService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,6 +21,7 @@ import java.util.Map;
 public class NotificationController {
 
     private final NotificationService notificationService;
+    private final FcmPushService fcmPushService;
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<NotificationResponse>>> getMyNotifications(
@@ -45,5 +49,21 @@ public class NotificationController {
                                                       @AuthenticationPrincipal CustomUserDetails currentUser) {
         notificationService.markRead(id, currentUser.getEmail());
         return ResponseEntity.ok(ApiResponse.ok("Đã đánh dấu đã đọc", null));
+    }
+
+    @PostMapping("/device-token")
+    public ResponseEntity<ApiResponse<Void>> registerDeviceToken(
+            @Valid @RequestBody DeviceTokenRequest request,
+            @AuthenticationPrincipal CustomUserDetails currentUser) {
+        fcmPushService.registerToken(currentUser.getEmail(), request);
+        return ResponseEntity.ok(ApiResponse.ok("Đã đăng ký thiết bị nhận thông báo", null));
+    }
+
+    @DeleteMapping("/device-token")
+    public ResponseEntity<ApiResponse<Void>> unregisterDeviceToken(
+            @RequestParam String token,
+            @AuthenticationPrincipal CustomUserDetails currentUser) {
+        fcmPushService.unregisterToken(currentUser.getEmail(), token);
+        return ResponseEntity.ok(ApiResponse.ok("Đã hủy đăng ký thông báo thiết bị", null));
     }
 }

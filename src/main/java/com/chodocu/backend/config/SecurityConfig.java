@@ -54,7 +54,8 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // Chỉ đăng ký / đăng nhập là công khai; /me, /profile, /password cần token
+                        // Chỉ đăng ký / đăng nhập / health là công khai; /me, /profile, /password cần token
+                        .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
                         .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
                         // Khách vãng lai vẫn xem được tin đăng, danh mục, trường
                         // ("/my-posts" khớp mẫu "/{id}" nên phải khai báo cần đăng nhập trước)

@@ -49,6 +49,7 @@ public class ChatService {
     private final ProductRepository productRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final DtoMapper dtoMapper;
+    private final FcmPushService fcmPushService;
 
     // ----------------------------------------------------------------
     // Gửi tin
@@ -226,11 +227,28 @@ public class ChatService {
         ChatMessageResponse response = dtoMapper.toChatMessageResponse(chatMessageRepository.save(message));
         String receiverEmail = message.getReceiver().getEmail();
         String senderEmail = message.getSender().getEmail();
+        Long receiverId = message.getReceiver().getId();
+        Long senderId = message.getSender().getId();
+        String senderName = message.getSender().getFullName();
+        Long productId = message.getProduct() != null ? message.getProduct().getId() : null;
+        String preview = previewOf(message);
+        boolean pushFcm = !MessageType.SYSTEM.name().equals(message.getMessageType());
 
         runAfterCommit(() -> {
             messagingTemplate.convertAndSendToUser(receiverEmail, MESSAGES_QUEUE, response);
             messagingTemplate.convertAndSendToUser(senderEmail, MESSAGES_QUEUE, response);
         });
+
+        if (pushFcm) {
+            Map<String, String> data = new HashMap<>();
+            data.put("type", "CHAT_MESSAGE");
+            data.put("partnerId", String.valueOf(senderId));
+            data.put("partnerName", senderName != null ? senderName : "Tin nhắn mới");
+            if (productId != null) {
+                data.put("productId", String.valueOf(productId));
+            }
+            fcmPushService.pushAfterCommit(receiverId, senderName, preview, data);
+        }
         return response;
     }
 

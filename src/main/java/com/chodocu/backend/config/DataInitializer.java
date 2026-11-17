@@ -10,6 +10,7 @@ import com.chodocu.backend.service.PlatformSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -33,9 +34,11 @@ public class DataInitializer implements CommandLineRunner {
     private final TransactionRepository transactionRepository;
     private final PlatformSettingService platformSettingService;
     private final PasswordEncoder passwordEncoder;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public void run(String... args) {
+        ensureDeviceTokensTable();
         seedPlatformConfig();
         clearGeneratedAvatars();
 
@@ -587,6 +590,25 @@ public class DataInitializer implements CommandLineRunner {
             ));
             platformSettingService.invalidateCache();
             log.info("Đã tạo 3 bậc phí sàn mặc định.");
+        }
+    }
+
+    private void ensureDeviceTokensTable() {
+        try {
+            jdbcTemplate.execute("""
+                    CREATE TABLE IF NOT EXISTS device_tokens (
+                        id BIGSERIAL PRIMARY KEY,
+                        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        token VARCHAR(500) NOT NULL UNIQUE,
+                        platform VARCHAR(30) NOT NULL DEFAULT 'ANDROID',
+                        package_name VARCHAR(120),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id)");
+        } catch (Exception e) {
+            log.warn("Không thể tự tạo bảng device_tokens: {}", e.getMessage());
         }
     }
 
