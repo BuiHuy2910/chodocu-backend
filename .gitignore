@@ -17,6 +17,7 @@ desktop.ini
 uploads/
 
 # ---- Firebase & Runtime Secrets ----
+google-services.json
 *firebase-adminsdk*.json
 firebase-service-account*.json
 .env
