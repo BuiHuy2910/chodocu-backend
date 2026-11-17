@@ -537,49 +537,63 @@ public class DataInitializer implements CommandLineRunner {
      * Chạy mỗi lần khởi động nhưng chỉ chèn khi key chưa tồn tại (admin đã sửa thì giữ nguyên).
      */
     private void seedPlatformConfig() {
-        seedSetting("platform_fee_rate", "0.05", "Tỷ lệ phí sàn cơ bản (0.05 = 5%)");
-        seedSetting("min_platform_fee", "2000", "Phí sàn tối thiểu (VNĐ)");
-        seedSetting("max_platform_fee", "50000", "Phí sàn tối đa (VNĐ). 0 = không giới hạn");
-        seedSetting("fee_enabled", "true", "Bật/tắt thu phí sàn");
-        seedSetting("fee_payer", "SELLER", "Bên chịu phí: SELLER | BUYER | SPLIT");
-        seedSetting("fee_round_step", "1000", "Làm tròn phí theo bước (VNĐ)");
-        seedSetting("post_require_approval", "true", "Bài đăng phải chờ admin duyệt");
-        seedSetting("max_images_per_post", "5", "Số ảnh tối đa mỗi bài đăng");
-        seedSetting("order_auto_cancel_hours", "72", "Tự hủy đơn PENDING sau N giờ");
-        seedSetting("app_name", "Chợ Đồ Cũ", "Tên ứng dụng hiển thị");
+        java.util.Set<String> existingKeys = platformSettingRepository.findAll().stream()
+                .map(PlatformSetting::getKey)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.List<PlatformSetting> toInsert = new java.util.ArrayList<>();
+
+        addSettingIfMissing(existingKeys, toInsert, "platform_fee_rate", "0.05", "Tỷ lệ phí sàn cơ bản (0.05 = 5%)");
+        addSettingIfMissing(existingKeys, toInsert, "min_platform_fee", "2000", "Phí sàn tối thiểu (VNĐ)");
+        addSettingIfMissing(existingKeys, toInsert, "max_platform_fee", "50000", "Phí sàn tối đa (VNĐ). 0 = không giới hạn");
+        addSettingIfMissing(existingKeys, toInsert, "fee_enabled", "true", "Bật/tắt thu phí sàn");
+        addSettingIfMissing(existingKeys, toInsert, "fee_payer", "SELLER", "Bên chịu phí: SELLER | BUYER | SPLIT");
+        addSettingIfMissing(existingKeys, toInsert, "fee_round_step", "1000", "Làm tròn phí theo bước (VNĐ)");
+        addSettingIfMissing(existingKeys, toInsert, "post_require_approval", "true", "Bài đăng phải chờ admin duyệt");
+        addSettingIfMissing(existingKeys, toInsert, "max_images_per_post", "5", "Số ảnh tối đa mỗi bài đăng");
+        addSettingIfMissing(existingKeys, toInsert, "order_auto_cancel_hours", "72", "Tự hủy đơn PENDING sau N giờ");
+        addSettingIfMissing(existingKeys, toInsert, "app_name", "Chợ Đồ Cũ", "Tên ứng dụng hiển thị");
+
+        if (!toInsert.isEmpty()) {
+            platformSettingRepository.saveAll(toInsert);
+            platformSettingService.invalidateCache();
+        }
 
         if (platformFeeTierRepository.count() == 0) {
-            platformFeeTierRepository.save(PlatformFeeTier.builder()
-                    .name("Đơn nhỏ (< 100.000đ)")
-                    .minAmount(BigDecimal.ZERO)
-                    .maxAmount(new BigDecimal("100000"))
-                    .feeRate(new BigDecimal("0.03"))
-                    .priority(10)
-                    .active(true)
-                    .build());
-            platformFeeTierRepository.save(PlatformFeeTier.builder()
-                    .name("Đơn vừa (100k - 1 triệu)")
-                    .minAmount(new BigDecimal("100000"))
-                    .maxAmount(new BigDecimal("1000000"))
-                    .feeRate(new BigDecimal("0.04"))
-                    .priority(20)
-                    .active(true)
-                    .build());
-            platformFeeTierRepository.save(PlatformFeeTier.builder()
-                    .name("Đơn lớn (> 1 triệu)")
-                    .minAmount(new BigDecimal("1000000"))
-                    .maxAmount(null)
-                    .feeRate(new BigDecimal("0.05"))
-                    .priority(30)
-                    .active(true)
-                    .build());
+            platformFeeTierRepository.saveAll(List.of(
+                    PlatformFeeTier.builder()
+                            .name("Đơn nhỏ (< 100.000đ)")
+                            .minAmount(BigDecimal.ZERO)
+                            .maxAmount(new BigDecimal("100000"))
+                            .feeRate(new BigDecimal("0.03"))
+                            .priority(10)
+                            .active(true)
+                            .build(),
+                    PlatformFeeTier.builder()
+                            .name("Đơn vừa (100k - 1 triệu)")
+                            .minAmount(new BigDecimal("100000"))
+                            .maxAmount(new BigDecimal("1000000"))
+                            .feeRate(new BigDecimal("0.04"))
+                            .priority(20)
+                            .active(true)
+                            .build(),
+                    PlatformFeeTier.builder()
+                            .name("Đơn lớn (> 1 triệu)")
+                            .minAmount(new BigDecimal("1000000"))
+                            .maxAmount(null)
+                            .feeRate(new BigDecimal("0.05"))
+                            .priority(30)
+                            .active(true)
+                            .build()
+            ));
+            platformSettingService.invalidateCache();
             log.info("Đã tạo 3 bậc phí sàn mặc định.");
         }
     }
 
-    private void seedSetting(String key, String value, String description) {
-        if (platformSettingRepository.findByKey(key).isEmpty()) {
-            platformSettingRepository.save(PlatformSetting.builder()
+    private void addSettingIfMissing(java.util.Set<String> existingKeys, java.util.List<PlatformSetting> toInsert,
+                                     String key, String value, String description) {
+        if (!existingKeys.contains(key)) {
+            toInsert.add(PlatformSetting.builder()
                     .key(key)
                     .value(value)
                     .description(description)

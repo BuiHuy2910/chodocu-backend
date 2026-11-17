@@ -16,11 +16,13 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
 
+    @Transactional
     public void createNotification(User user, String type, String title, String message, Long referenceId) {
         notificationRepository.save(Notification.builder()
                 .user(user)

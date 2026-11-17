@@ -1,6 +1,7 @@
 package com.chodocu.backend.controller;
 
 import com.chodocu.backend.dto.ApiResponse;
+import com.chodocu.backend.dto.PageResponse;
 import com.chodocu.backend.dto.ReportResponse;
 import com.chodocu.backend.dto.admin.*;
 import com.chodocu.backend.dto.auth.UserSummaryDto;
@@ -8,6 +9,7 @@ import com.chodocu.backend.dto.order.OrderResponse;
 import com.chodocu.backend.dto.product.ProductResponse;
 import com.chodocu.backend.enums.OrderStatus;
 import com.chodocu.backend.enums.ProductStatus;
+import com.chodocu.backend.enums.Role;
 import com.chodocu.backend.exception.BadRequestException;
 import com.chodocu.backend.security.CustomUserDetails;
 import com.chodocu.backend.service.*;
@@ -23,12 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * API trang quản trị.
- *
- * ADMIN và MODERATOR đều vào được (xem SecurityConfig):
- * - Kiểm duyệt viên (MODERATOR): thống kê, duyệt / từ chối / ẩn tin, nhật ký kiểm duyệt, báo cáo vi phạm.
- * - Chỉ ADMIN (gắn {@code @PreAuthorize(ADMIN_ONLY)}): xóa tin, đơn hàng, người dùng, phân quyền,
- *   bậc phí, cài đặt và tài chính — khớp với các mục "chỉ admin" trên giao diện quản trị.
+ * API trang quản trị (đã hỗ trợ phân trang và gom truy vấn tối ưu cho Supabase).
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -44,17 +41,42 @@ public class AdminController {
     private final OrderService orderService;
 
     @GetMapping("/stats")
-    public ResponseEntity<ApiResponse<DashboardStatsResponse>> getStats() {
-        return ResponseEntity.ok(ApiResponse.ok("Thống kê hệ thống", adminService.getDashboardStats()));
+    public ResponseEntity<ApiResponse<DashboardStatsResponse>> getStats(
+            @AuthenticationPrincipal CustomUserDetails currentUser
+    ) {
+        boolean isAdmin = currentUser != null && "ADMIN".equals(currentUser.getRole());
+        return ResponseEntity.ok(ApiResponse.ok("Thống kê hệ thống", adminService.getDashboardStats(isAdmin)));
     }
 
-    // --- Kiểm duyệt tin đăng ---
+    // --- Kiểm duyệt & Sản phẩm ---
 
     @GetMapping("/products")
-    public ResponseEntity<ApiResponse<List<ProductResponse>>> getAllProducts(
-            @RequestParam(required = false) ProductStatus status
+    public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> getAllProducts(
+            @RequestParam(required = false) ProductStatus status,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String school,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "15") int size,
+            @RequestParam(defaultValue = "createdAt") String sortBy,
+            @RequestParam(defaultValue = "desc") String sortDir
     ) {
-        return ResponseEntity.ok(ApiResponse.ok("Danh sách tin đăng quản trị", adminService.getAllProductsForAdmin(status)));
+        return ResponseEntity.ok(ApiResponse.ok("Danh sách tin đăng quản trị",
+                adminService.getProductsPage(status, keyword, category, school, page, size, sortBy, sortDir)));
+    }
+
+    /** Hàng chờ duyệt gom trọn ngữ cảnh (phân trang + thống kê người bán + lịch sử) trong 1 request. */
+    @GetMapping("/products/pending-queue")
+    public ResponseEntity<ApiResponse<PendingQueueResponse>> getPendingQueue(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String school,
+            @RequestParam(defaultValue = "oldest") String sort,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok("Hàng chờ kiểm duyệt",
+                adminService.getPendingQueue(keyword, category, school, sort, page, size)));
     }
 
     @GetMapping("/products/{id}")
@@ -128,20 +150,27 @@ public class AdminController {
                 adminService.hideProduct(id, hidden, currentUser.getEmail())));
     }
 
-    /** Nhật ký kiểm duyệt gần nhất (ai duyệt, lý do gì). */
+    /** Nhật ký kiểm duyệt toàn hệ thống (phân trang). */
     @GetMapping("/moderation-logs")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getModerationLogs() {
-        return ResponseEntity.ok(ApiResponse.ok("Nhật ký kiểm duyệt", adminService.getModerationLogs()));
+    public ResponseEntity<ApiResponse<PageResponse<Map<String, Object>>>> getModerationLogs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok("Nhật ký kiểm duyệt", adminService.getModerationLogsPage(page, size)));
     }
 
     // --- Đơn hàng (chỉ ADMIN) ---
 
     @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/orders")
-    public ResponseEntity<ApiResponse<List<OrderResponse>>> getAllOrders(
-            @RequestParam(required = false) OrderStatus status
+    public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> getAllOrders(
+            @RequestParam(required = false) OrderStatus status,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "15") int size
     ) {
-        return ResponseEntity.ok(ApiResponse.ok("Danh sách đơn hàng", adminService.getAllOrders(status)));
+        return ResponseEntity.ok(ApiResponse.ok("Danh sách đơn hàng",
+                adminService.getOrdersPage(status, keyword, page, size)));
     }
 
     /** Body: {"status": "CANCELLED", "note": "..."} */
@@ -157,7 +186,7 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật trạng thái đơn hàng!", updated));
     }
 
-    // --- Bậc phí sàn (chỉ ADMIN) ---
+    // --- Bậc phí sàn & Tài chính (chỉ ADMIN) ---
 
     @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/fee-tiers")
@@ -184,19 +213,42 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Đã tắt bậc phí!", null));
     }
 
-    /** Xem trước phí sàn — dùng cho bảng mô phỏng ở admin. */
     @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/fee/preview")
     public ResponseEntity<ApiResponse<FeeCalculationResponse>> previewFee(@RequestParam BigDecimal amount) {
         return ResponseEntity.ok(ApiResponse.ok("Xem trước phí sàn", platformSettingService.calculate(amount)));
     }
 
+    @PreAuthorize(ADMIN_ONLY)
+    @GetMapping("/financial")
+    public ResponseEntity<ApiResponse<FinancialSummaryResponse>> getFinancial(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok("Tổng quan tài chính", platformSettingService.getFinancialSummary(page, size)));
+    }
+
+    @PreAuthorize(ADMIN_ONLY)
+    @GetMapping("/transactions")
+    public ResponseEntity<ApiResponse<PageResponse<TransactionResponse>>> getTransactions(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok("Danh sách giao dịch", platformSettingService.getTransactionsPage(page, size)));
+    }
+
     // --- Người dùng (chỉ ADMIN) ---
 
     @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/users")
-    public ResponseEntity<ApiResponse<List<UserSummaryDto>>> getAllUsers() {
-        return ResponseEntity.ok(ApiResponse.ok("Danh sách tài khoản sinh viên", adminService.getAllUsers()));
+    public ResponseEntity<ApiResponse<PageResponse<UserSummaryDto>>> getAllUsers(
+            @RequestParam(required = false) Role role,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "15") int size
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok("Danh sách tài khoản",
+                adminService.getUsersPage(role, keyword, page, size)));
     }
 
     @PreAuthorize(ADMIN_ONLY)
@@ -216,7 +268,7 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok("Đã cập nhật phân quyền!", updated));
     }
 
-    // --- Cài đặt hệ thống & tài chính (chỉ ADMIN) ---
+    // --- Cài đặt hệ thống (chỉ ADMIN) ---
 
     @PreAuthorize(ADMIN_ONLY)
     @GetMapping("/settings")
@@ -235,19 +287,17 @@ public class AdminController {
                 platformSettingService.updateSetting(key, body.get("value"), currentUser.getEmail())));
     }
 
-    @PreAuthorize(ADMIN_ONLY)
-    @GetMapping("/financial")
-    public ResponseEntity<ApiResponse<FinancialSummaryResponse>> getFinancial() {
-        return ResponseEntity.ok(ApiResponse.ok("Tổng quan tài chính", platformSettingService.getFinancialSummary()));
-    }
-
     // --- Báo cáo vi phạm ---
 
     @GetMapping("/reports")
-    public ResponseEntity<ApiResponse<List<ReportResponse>>> getReports(
-            @RequestParam(required = false, defaultValue = "ALL") String status
+    public ResponseEntity<ApiResponse<PageResponse<ReportResponse>>> getReports(
+            @RequestParam(required = false, defaultValue = "ALL") String status,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "15") int size
     ) {
-        return ResponseEntity.ok(ApiResponse.ok("Danh sách báo cáo vi phạm", reportService.getAllReports(status)));
+        return ResponseEntity.ok(ApiResponse.ok("Danh sách báo cáo vi phạm",
+                reportService.getReportsPage(status, keyword, page, size)));
     }
 
     @PutMapping("/reports/{id}/resolve")

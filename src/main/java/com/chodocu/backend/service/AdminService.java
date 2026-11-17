@@ -1,6 +1,8 @@
 package com.chodocu.backend.service;
 
+import com.chodocu.backend.dto.PageResponse;
 import com.chodocu.backend.dto.admin.DashboardStatsResponse;
+import com.chodocu.backend.dto.admin.PendingQueueResponse;
 import com.chodocu.backend.dto.auth.UserSummaryDto;
 import com.chodocu.backend.dto.order.OrderResponse;
 import com.chodocu.backend.dto.product.ProductResponse;
@@ -16,26 +18,39 @@ import com.chodocu.backend.exception.ResourceNotFoundException;
 import com.chodocu.backend.repository.ModerationLogRepository;
 import com.chodocu.backend.repository.OrderRequestRepository;
 import com.chodocu.backend.repository.ProductRepository;
+import com.chodocu.backend.repository.ReportRepository;
+import com.chodocu.backend.repository.TransactionRepository;
 import com.chodocu.backend.repository.UserRepository;
+import com.chodocu.backend.security.CustomUserDetailsService;
 import com.chodocu.backend.util.DisplayFormat;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- * Nghiệp vụ trang quản trị: thống kê, kiểm duyệt tin đăng, quản lý người dùng và đơn hàng.
+ * Nghiệp vụ trang quản trị: thống kê (tổng hợp SQL trực tiếp), kiểm duyệt tin đăng,
+ * phân trang danh sách sản phẩm / đơn hàng / người dùng / nhật ký.
  */
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class AdminService {
 
     /** Duyệt được tin đang chờ duyệt, hoặc tin đã bị từ chối (xét lại). */
@@ -45,63 +60,208 @@ public class AdminService {
     private static final Set<ProductStatus> REJECTABLE =
             Set.of(ProductStatus.PENDING, ProductStatus.APPROVED, ProductStatus.HIDDEN);
 
+    /** Các trạng thái tính là "đã qua kiểm duyệt" cho thẻ thống kê người bán. */
+    private static final Set<ProductStatus> APPROVED_FAMILY =
+            Set.of(ProductStatus.APPROVED, ProductStatus.IN_TRANSACTION, ProductStatus.SOLD);
+
+    private static final Set<String> SORTABLE_PRODUCT_FIELDS = Set.of("createdAt", "price", "viewCount", "id");
+    private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_REASON_LENGTH = 255;
 
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
     private final OrderRequestRepository orderRepository;
     private final ModerationLogRepository moderationLogRepository;
+    private final ReportRepository reportRepository;
+    private final TransactionRepository transactionRepository;
+    private final CustomUserDetailsService userDetailsService;
     private final DtoMapper dtoMapper;
     private final NotificationService notificationService;
 
     // ----------------------------------------------------------------
-    // Thống kê
+    // Thống kê — chỉ chạy các câu GROUP BY / COUNT gọn nhẹ trên Supabase
     // ----------------------------------------------------------------
 
-    public DashboardStatsResponse getDashboardStats() {
-        List<Product> allProducts = productRepository.findAll();
-        List<OrderRequest> allOrders = orderRepository.findAll();
+    public DashboardStatsResponse getDashboardStats(boolean includeFinancial) {
+        Object[] s = productRepository.fetchDashboardOverviewCounts().get(0);
 
-        BigDecimal totalValue = allOrders.stream()
-                .filter(o -> o.getStatus() == OrderStatus.COMPLETED || o.getStatus() == OrderStatus.ACCEPTED)
-                .map(OrderRequest::getOfferedPrice)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        Map<String, Long> byCategory = new LinkedHashMap<>();
+        for (Object[] row : productRepository.countGroupByCategory()) {
+            if (row[0] != null && row[1] instanceof Number cnt) {
+                byCategory.put(String.valueOf(row[0]), cnt.longValue());
+            }
+        }
 
-        Map<String, Long> byCategory = allProducts.stream()
-                .filter(p -> p.getCategory() != null)
-                .collect(Collectors.groupingBy(p -> p.getCategory().getName(), LinkedHashMap::new, Collectors.counting()));
-
-        Map<String, Long> byUniversity = allProducts.stream()
-                .filter(p -> p.getUniversity() != null)
-                .collect(Collectors.groupingBy(p -> p.getUniversity().getShortName(), LinkedHashMap::new, Collectors.counting()));
+        Map<String, Long> byUniversity = new LinkedHashMap<>();
+        for (Object[] row : productRepository.countGroupByUniversity()) {
+            if (row[0] != null && row[1] instanceof Number cnt) {
+                byUniversity.put(String.valueOf(row[0]), cnt.longValue());
+            }
+        }
 
         return DashboardStatsResponse.builder()
-                .totalStudents(userRepository.countByRole(Role.STUDENT))
-                .totalModerators(userRepository.countByRole(Role.MODERATOR))
-                .totalProducts(allProducts.size())
-                .pendingProducts(productRepository.countByStatus(ProductStatus.PENDING))
-                .approvedProducts(productRepository.countByStatus(ProductStatus.APPROVED))
-                .inTransactionProducts(productRepository.countByStatus(ProductStatus.IN_TRANSACTION))
-                .soldProducts(productRepository.countByStatus(ProductStatus.SOLD))
-                .totalOrders(allOrders.size())
-                .completedOrders(orderRepository.countByStatus(OrderStatus.COMPLETED))
-                .totalTransactionValue(totalValue)
+                .totalStudents(toLong(s[0]))
+                .totalModerators(toLong(s[1]))
+                .totalProducts(toLong(s[2]))
+                .pendingProducts(toLong(s[3]))
+                .approvedProducts(toLong(s[4]))
+                .inTransactionProducts(toLong(s[5]))
+                .soldProducts(toLong(s[6]))
+                .totalOrders(toLong(s[7]))
+                .completedOrders(toLong(s[8]))
+                .totalTransactionValue(toBigDecimal(s[9]))
+                .pendingReports(toLong(s[10]))
+                .totalPlatformFees(includeFinancial ? toBigDecimal(s[11]) : null)
                 .productsByCategory(byCategory)
                 .productsByUniversity(byUniversity)
                 .build();
     }
 
+    private long toLong(Object v) {
+        return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private BigDecimal toBigDecimal(Object v) {
+        if (v instanceof BigDecimal bd) return bd;
+        if (v instanceof Number n) return BigDecimal.valueOf(n.longValue());
+        return BigDecimal.ZERO;
+    }
+
     // ----------------------------------------------------------------
-    // Xem tin đăng
+    // Xem tin đăng & Hàng chờ duyệt (phân trang)
     // ----------------------------------------------------------------
 
-    public List<ProductResponse> getAllProductsForAdmin(ProductStatus status) {
-        List<Product> products = (status != null)
-                ? productRepository.findByStatusOrderByCreatedAtDesc(status)
-                : productRepository.findAllByOrderByCreatedAtDesc();
-        return products.stream()
-                .map(dtoMapper::toAdminProductResponse)
-                .toList();
+    public PageResponse<ProductResponse> getProductsPage(
+            ProductStatus status,
+            String keyword,
+            String categoryName,
+            String schoolName,
+            int page,
+            int size,
+            String sortBy,
+            String sortDir
+    ) {
+        String cleanKeyword = normalizeKeyword(keyword);
+        Long exactId = parseNumericId(keyword);
+        String cleanCat = StringUtils.hasText(categoryName) ? categoryName.trim() : "";
+        String cleanSchool = StringUtils.hasText(schoolName) ? schoolName.trim() : "";
+        Pageable pageable = PageRequest.of(Math.max(page, 0), clampSize(size, 20), buildProductSort(sortBy, sortDir));
+
+        Page<Product> productPage = productRepository.searchAdminProducts(
+                status, cleanKeyword, exactId, cleanCat, cleanSchool, pageable);
+        return PageResponse.of(productPage, dtoMapper::toAdminProductResponse);
+    }
+
+    /**
+     * Tải 1 trang hàng chờ duyệt kèm đầy đủ ngữ cảnh người bán & lịch sử duyệt trong 1 lần gọi.
+     */
+    public PendingQueueResponse getPendingQueue(
+            String keyword,
+            String categoryName,
+            String schoolName,
+            String sort,
+            int page,
+            int size
+    ) {
+        String cleanKeyword = normalizeKeyword(keyword);
+        Long exactId = parseNumericId(keyword);
+        String cleanCat = StringUtils.hasText(categoryName) ? categoryName.trim() : "";
+        String cleanSchool = StringUtils.hasText(schoolName) ? schoolName.trim() : "";
+        Pageable pageable = PageRequest.of(Math.max(page, 0), clampSize(size, 20), buildPendingSort(sort));
+
+        Page<Product> pendingPage = productRepository.searchAdminProducts(
+                ProductStatus.PENDING, cleanKeyword, exactId, cleanCat, cleanSchool, pageable);
+
+        List<Product> products = pendingPage.getContent();
+        PageResponse<ProductResponse> pageDto = PageResponse.of(pendingPage, dtoMapper::toAdminProductResponse);
+
+        boolean unfiltered = cleanKeyword.isEmpty() && cleanCat.isEmpty() && cleanSchool.isEmpty();
+        long totalPending = unfiltered
+                ? pendingPage.getTotalElements()
+                : productRepository.countByStatus(ProductStatus.PENDING);
+
+        List<String> categories = productRepository.findDistinctPendingCategories();
+        List<String> schools = productRepository.findDistinctPendingSchools();
+
+        Set<Long> sellerIds = products.stream()
+                .map(p -> p.getSeller() != null ? p.getSeller().getId() : null)
+                .filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+
+        Map<Long, Map<String, Long>> sellerStats = new LinkedHashMap<>();
+        Map<Long, List<Map<String, Object>>> sellerSiblings = new LinkedHashMap<>();
+        if (!sellerIds.isEmpty()) {
+            for (Long sid : sellerIds) {
+                Map<String, Long> blank = new LinkedHashMap<>();
+                blank.put("total", 0L);
+                blank.put("approved", 0L);
+                blank.put("rejected", 0L);
+                blank.put("pending", 0L);
+                sellerStats.put(sid, blank);
+                sellerSiblings.put(sid, new ArrayList<>());
+            }
+
+            for (Object[] row : productRepository.countBySellerIdsGroupByStatus(sellerIds)) {
+                Long sid = (Long) row[0];
+                ProductStatus st = (ProductStatus) row[1];
+                long count = ((Number) row[2]).longValue();
+                Map<String, Long> m = sellerStats.get(sid);
+                if (m != null) {
+                    m.put("total", m.get("total") + count);
+                    if (APPROVED_FAMILY.contains(st)) m.put("approved", m.get("approved") + count);
+                    if (st == ProductStatus.REJECTED) m.put("rejected", m.get("rejected") + count);
+                    if (st == ProductStatus.PENDING) m.put("pending", m.get("pending") + count);
+                }
+            }
+
+            for (Object[] row : productRepository.findSiblingSummariesBySellerIds(sellerIds)) {
+                Long pid = (Long) row[0];
+                Long sid = (Long) row[1];
+                String title = (String) row[2];
+                ProductStatus st = (ProductStatus) row[3];
+                List<Map<String, Object>> list = sellerSiblings.get(sid);
+                if (list != null) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", pid);
+                    item.put("title", title);
+                    item.put("status", st != null ? st.name() : null);
+                    list.add(item);
+                }
+            }
+        }
+
+        Map<Long, List<Map<String, Object>>> logsByProduct = new LinkedHashMap<>();
+        if (!products.isEmpty()) {
+            List<Long> productIds = products.stream().map(Product::getId).toList();
+            for (Long pid : productIds) {
+                logsByProduct.put(pid, new ArrayList<>());
+            }
+            for (Object[] r : moderationLogRepository.findRowsByProductIds(productIds)) {
+                Long pid = (Long) r[0];
+                List<Map<String, Object>> logs = logsByProduct.get(pid);
+                if (logs != null) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", r[1]);
+                    m.put("action", r[2]);
+                    m.put("reason", r[3]);
+                    m.put("moderatorName", r[4] != null ? r[4] : "Hệ thống");
+                    m.put("fromStatus", r[5]);
+                    m.put("toStatus", r[6]);
+                    m.put("createdAt", DisplayFormat.dateTime((LocalDateTime) r[7]));
+                    logs.add(m);
+                }
+            }
+        }
+
+        return PendingQueueResponse.builder()
+                .page(pageDto)
+                .totalPending(totalPending)
+                .categories(categories)
+                .schools(schools)
+                .sellerStats(sellerStats)
+                .sellerSiblings(sellerSiblings)
+                .logsByProduct(logsByProduct)
+                .build();
     }
 
     /** Chi tiết 1 tin (mọi trạng thái) để kiểm duyệt viên xem kỹ trước khi duyệt. */
@@ -110,32 +270,31 @@ public class AdminService {
     }
 
     /** Lịch sử kiểm duyệt của 1 tin, mới nhất trước. */
-    @Transactional(readOnly = true)
     public List<Map<String, Object>> getProductLogs(Long productId) {
-        findProduct(productId); // báo 404 nếu tin không tồn tại
-        return moderationLogRepository.findByProductIdOrderByCreatedAtDesc(productId).stream()
-                .map(this::toProductLog)
-                .toList();
+        List<ModerationLog> logs = moderationLogRepository.findByProductIdWithAdmin(productId);
+        if (logs.isEmpty() && !productRepository.existsById(productId)) {
+            throw new ResourceNotFoundException("Không tìm thấy tin đăng");
+        }
+        return logs.stream().map(this::toProductLog).toList();
     }
 
-    /** Nhật ký kiểm duyệt gần nhất trên toàn hệ thống. */
-    @Transactional(readOnly = true)
-    public List<Map<String, Object>> getModerationLogs() {
-        return moderationLogRepository.findTop100ByOrderByCreatedAtDesc().stream()
-                .map(log -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("id", log.getId());
-                    m.put("productId", log.getProduct() != null ? log.getProduct().getId() : null);
-                    m.put("productTitle", log.getProduct() != null ? log.getProduct().getTitle() : null);
-                    m.put("adminName", moderatorNameOf(log));
-                    m.put("action", log.getAction());
-                    m.put("fromStatus", log.getFromStatus());
-                    m.put("toStatus", log.getToStatus());
-                    m.put("reason", log.getReason());
-                    m.put("createdAt", DisplayFormat.dateTime(log.getCreatedAt()));
-                    return m;
-                })
-                .toList();
+    /** Nhật ký kiểm duyệt toàn hệ thống (phân trang, không N+1). */
+    public PageResponse<Map<String, Object>> getModerationLogsPage(int page, int size) {
+        Pageable pageable = PageRequest.of(Math.max(page, 0), clampSize(size, 20));
+        Page<Object[]> rows = moderationLogRepository.findAdminLogRows(pageable);
+        return PageResponse.of(rows, r -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r[0]);
+            m.put("productId", r[1]);
+            m.put("productTitle", r[2]);
+            m.put("adminName", r[3] != null ? r[3] : "Hệ thống");
+            m.put("action", r[4]);
+            m.put("fromStatus", r[5]);
+            m.put("toStatus", r[6]);
+            m.put("reason", r[7]);
+            m.put("createdAt", DisplayFormat.dateTime((LocalDateTime) r[8]));
+            return m;
+        });
     }
 
     // ----------------------------------------------------------------
@@ -168,7 +327,7 @@ public class AdminService {
         Set<Long> uniqueIds = new LinkedHashSet<>(ids);
 
         int processed = 0;
-        for (Product product : productRepository.findAllById(uniqueIds)) {
+        for (Product product : productRepository.findWithDetailsAllByIdIn(uniqueIds)) {
             if (APPROVABLE.contains(product.getStatus())) {
                 approve(product, admin);
                 processed++;
@@ -185,7 +344,7 @@ public class AdminService {
         Set<Long> uniqueIds = new LinkedHashSet<>(ids);
 
         int processed = 0;
-        for (Product product : productRepository.findAllById(uniqueIds)) {
+        for (Product product : productRepository.findWithDetailsAllByIdIn(uniqueIds)) {
             if (REJECTABLE.contains(product.getStatus())) {
                 reject(product, cleanReason, admin);
                 processed++;
@@ -223,47 +382,92 @@ public class AdminService {
     }
 
     // ----------------------------------------------------------------
-    // Đơn hàng & người dùng
+    // Đơn hàng & người dùng (phân trang)
     // ----------------------------------------------------------------
 
-    /** Toàn bộ đơn hàng, lọc theo trạng thái nếu có. */
-    public List<OrderResponse> getAllOrders(OrderStatus status) {
-        List<OrderRequest> orders = status != null
-                ? orderRepository.findByStatusOrderByCreatedAtDesc(status)
-                : orderRepository.findAll();
-        return orders.stream()
-                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-                .map(dtoMapper::toAdminOrderResponse)
-                .toList();
+    public PageResponse<OrderResponse> getOrdersPage(OrderStatus status, String keyword, int page, int size) {
+        String cleanKeyword = normalizeKeyword(keyword);
+        Long exactId = parseNumericId(keyword);
+        Pageable pageable = PageRequest.of(Math.max(page, 0), clampSize(size, 15), Sort.by("createdAt").descending());
+        Page<OrderRequest> orderPage = orderRepository.searchAdminOrders(status, cleanKeyword, exactId, pageable);
+        return PageResponse.of(orderPage, dtoMapper::toAdminOrderResponse);
     }
 
-    public List<UserSummaryDto> getAllUsers() {
-        return userRepository.findAllByOrderByCreatedAtDesc().stream()
-                .map(dtoMapper::toUserSummary)
-                .toList();
+    public PageResponse<UserSummaryDto> getUsersPage(Role role, String keyword, int page, int size) {
+        String cleanKeyword = normalizeKeyword(keyword);
+        Pageable pageable = PageRequest.of(Math.max(page, 0), clampSize(size, 15), Sort.by("createdAt").descending());
+        Page<User> userPage = userRepository.searchUsers(role, cleanKeyword, pageable);
+        return PageResponse.of(userPage, dtoMapper::toUserSummary);
     }
 
     @Transactional
     public UserSummaryDto toggleUserActive(Long userId) {
         User user = findUserById(userId);
         user.setActive(!Boolean.TRUE.equals(user.getActive()));
-        return dtoMapper.toUserSummary(userRepository.save(user));
+        User saved = userRepository.save(user);
+        userDetailsService.evict(saved.getEmail());
+        return dtoMapper.toUserSummary(saved);
     }
 
     @Transactional
     public UserSummaryDto changeUserRole(Long userId, String roleName) {
         User user = findUserById(userId);
         try {
-            user.setRole(Role.valueOf(String.valueOf(roleName).trim().toUpperCase()));
+            user.setRole(Role.valueOf(String.valueOf(roleName).trim().toUpperCase(Locale.ROOT)));
         } catch (IllegalArgumentException e) {
             throw new BadRequestException("Role không hợp lệ: " + roleName);
         }
-        return dtoMapper.toUserSummary(userRepository.save(user));
+        User saved = userRepository.save(user);
+        userDetailsService.evict(saved.getEmail());
+        return dtoMapper.toUserSummary(saved);
     }
 
     // ----------------------------------------------------------------
     // Hàm hỗ trợ
     // ----------------------------------------------------------------
+
+    private Sort buildProductSort(String sortBy, String sortDir) {
+        String field = SORTABLE_PRODUCT_FIELDS.contains(sortBy) ? sortBy : "createdAt";
+        return "asc".equalsIgnoreCase(sortDir)
+                ? Sort.by(field).ascending().and(Sort.by("id").ascending())
+                : Sort.by(field).descending().and(Sort.by("id").descending());
+    }
+
+    private Sort buildPendingSort(String sort) {
+        if (sort == null) return Sort.by("createdAt").ascending().and(Sort.by("id").ascending());
+        return switch (sort) {
+            case "newest" -> Sort.by("createdAt").descending().and(Sort.by("id").descending());
+            case "price-asc" -> Sort.by("price").ascending().and(Sort.by("createdAt").ascending());
+            case "price-desc" -> Sort.by("price").descending().and(Sort.by("createdAt").ascending());
+            default -> Sort.by("createdAt").ascending().and(Sort.by("id").ascending());
+        };
+    }
+
+    private int clampSize(int size, int defaultSize) {
+        if (size <= 0) return defaultSize;
+        return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    private String normalizeKeyword(String keyword) {
+        if (!StringUtils.hasText(keyword)) return "";
+        String t = keyword.trim();
+        if (t.startsWith("#") && t.length() > 1 && t.substring(1).chars().allMatch(Character::isDigit)) {
+            return t.substring(1);
+        }
+        return t.toLowerCase(Locale.ROOT);
+    }
+
+    private Long parseNumericId(String raw) {
+        if (!StringUtils.hasText(raw)) return null;
+        String t = raw.trim();
+        if (t.startsWith("#")) t = t.substring(1).trim();
+        if (t.isEmpty() || t.length() > 18 || !t.chars().allMatch(Character::isDigit)) return null;
+        try {
+            return Long.parseLong(t);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 
     private Product approve(Product product, User admin) {
         ProductStatus from = product.getStatus();
@@ -347,7 +551,7 @@ public class AdminService {
     }
 
     private Product findProduct(Long productId) {
-        return productRepository.findById(productId)
+        return productRepository.findWithDetailsById(productId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tin đăng"));
     }
 

@@ -1,5 +1,6 @@
 package com.chodocu.backend.service;
 
+import com.chodocu.backend.dto.PageResponse;
 import com.chodocu.backend.dto.admin.FeeCalculationResponse;
 import com.chodocu.backend.dto.admin.FeeTierDto;
 import com.chodocu.backend.dto.admin.FinancialSummaryResponse;
@@ -16,24 +17,32 @@ import com.chodocu.backend.repository.TransactionRepository;
 import com.chodocu.backend.repository.UserRepository;
 import com.chodocu.backend.util.DisplayFormat;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class PlatformSettingService {
+
+    private static final long CACHE_TTL_MS = 5 * 60_000L; // 5 phút, tự làm mới ngay khi admin cập nhật
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final PlatformSettingRepository settingRepository;
     private final PlatformFeeTierRepository feeTierRepository;
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
-
 
     public static final String FEE_RATE = "platform_fee_rate";
     public static final String MIN_FEE = "min_platform_fee";
@@ -42,53 +51,88 @@ public class PlatformSettingService {
     public static final String FEE_PAYER = "fee_payer";
     public static final String FEE_ROUND_STEP = "fee_round_step";
 
+    private volatile Map<String, String> cachedSettings;
+    private volatile long settingsExpireAt;
+
+    private volatile List<PlatformFeeTier> cachedActiveTiers;
+    private volatile long tiersExpireAt;
+
+    public void invalidateCache() {
+        cachedSettings = null;
+        settingsExpireAt = 0;
+        cachedActiveTiers = null;
+        tiersExpireAt = 0;
+    }
+
+    private Map<String, String> settingsMap() {
+        long now = System.currentTimeMillis();
+        Map<String, String> map = cachedSettings;
+        if (map == null || now >= settingsExpireAt) {
+            Map<String, String> fresh = settingRepository.findAll().stream()
+                    .collect(Collectors.toUnmodifiableMap(PlatformSetting::getKey, PlatformSetting::getValue, (a, b) -> b));
+            cachedSettings = fresh;
+            settingsExpireAt = now + CACHE_TTL_MS;
+            return fresh;
+        }
+        return map;
+    }
+
+    private List<PlatformFeeTier> activeTiers() {
+        long now = System.currentTimeMillis();
+        List<PlatformFeeTier> list = cachedActiveTiers;
+        if (list == null || now >= tiersExpireAt) {
+            List<PlatformFeeTier> fresh = List.copyOf(feeTierRepository.findByActiveTrueOrderByPriorityDesc());
+            cachedActiveTiers = fresh;
+            tiersExpireAt = now + CACHE_TTL_MS;
+            return fresh;
+        }
+        return list;
+    }
+
+    private String getSettingValue(String key) {
+        return settingsMap().get(key);
+    }
+
     public BigDecimal getCurrentFeeRate() {
-        return settingRepository.findByKey(FEE_RATE)
-                .map(s -> new BigDecimal(s.getValue()))
-                .orElse(new BigDecimal("0.05"));
+        String v = getSettingValue(FEE_RATE);
+        return v != null ? new BigDecimal(v) : new BigDecimal("0.05");
     }
 
     public BigDecimal getMinFee() {
-        return settingRepository.findByKey(MIN_FEE)
-                .map(s -> new BigDecimal(s.getValue()))
-                .orElse(new BigDecimal("2000"));
+        String v = getSettingValue(MIN_FEE);
+        return v != null ? new BigDecimal(v) : new BigDecimal("2000");
     }
 
     /** Trả về 0 nếu admin đặt "không giới hạn". */
     public BigDecimal getMaxFee() {
-        return settingRepository.findByKey(MAX_FEE)
-                .map(s -> new BigDecimal(s.getValue()))
-                .orElse(new BigDecimal("50000"));
+        String v = getSettingValue(MAX_FEE);
+        return v != null ? new BigDecimal(v) : new BigDecimal("50000");
     }
 
     public boolean isFeeEnabled() {
-        return settingRepository.findByKey(FEE_ENABLED)
-                .map(s -> Boolean.parseBoolean(s.getValue()))
-                .orElse(true);
+        String v = getSettingValue(FEE_ENABLED);
+        return v == null || Boolean.parseBoolean(v);
     }
 
     public String getFeePayer() {
-        return settingRepository.findByKey(FEE_PAYER)
-                .map(s -> s.getValue().toUpperCase(Locale.ROOT))
-                .orElse("SELLER");
+        String v = getSettingValue(FEE_PAYER);
+        return v != null ? v.toUpperCase(Locale.ROOT) : "SELLER";
     }
 
     public BigDecimal getRoundStep() {
-        return settingRepository.findByKey(FEE_ROUND_STEP)
-                .map(s -> new BigDecimal(s.getValue()))
-                .orElse(new BigDecimal("1000"));
+        String v = getSettingValue(FEE_ROUND_STEP);
+        return v != null ? new BigDecimal(v) : new BigDecimal("1000");
     }
 
     public boolean isPostApprovalRequired() {
-        return settingRepository.findByKey("post_require_approval")
-                .map(s -> Boolean.parseBoolean(s.getValue()))
-                .orElse(true);
+        String v = getSettingValue("post_require_approval");
+        return v == null || Boolean.parseBoolean(v);
     }
 
     /** Bậc phí áp dụng cho giá trị đơn, null nếu dùng tỷ lệ cơ bản. */
     public PlatformFeeTier resolveTier(BigDecimal amount) {
         if (amount == null) return null;
-        return feeTierRepository.findByActiveTrueOrderByPriorityDesc().stream()
+        return activeTiers().stream()
                 .filter(t -> t.matches(amount))
                 .findFirst()
                 .orElse(null);
@@ -161,14 +205,8 @@ public class PlatformSettingService {
     }
 
     public List<PlatformSettingDto> getAllSettings() {
-        return settingRepository.findAll().stream()
-                .map(s -> PlatformSettingDto.builder()
-                        .key(s.getKey())
-                        .value(s.getValue())
-                        .description(s.getDescription())
-                        .updatedAt(DisplayFormat.dateTime(s.getUpdatedAt()))
-                        .updatedBy(s.getUpdatedBy() != null ? s.getUpdatedBy().getFullName() : null)
-                        .build())
+        return settingRepository.findAllWithUpdatedBy().stream()
+                .map(this::toDto)
                 .collect(Collectors.toList());
     }
 
@@ -182,7 +220,9 @@ public class PlatformSettingService {
                 .orElse(PlatformSetting.builder().key(key).build());
         setting.setValue(value);
         setting.setUpdatedBy(admin);
-        return toDto(settingRepository.save(setting));
+        PlatformSetting saved = settingRepository.save(setting);
+        invalidateCache();
+        return toDto(saved);
     }
 
     private void validateSetting(String key, String value) {
@@ -261,7 +301,9 @@ public class PlatformSettingService {
         if (tier.getMaxAmount() != null && tier.getMaxAmount().compareTo(tier.getMinAmount()) < 0) {
             throw new BadRequestException("Giá trị 'đến' phải lớn hơn hoặc bằng giá trị 'từ'");
         }
-        return toTierDto(feeTierRepository.save(tier));
+        PlatformFeeTier saved = feeTierRepository.save(tier);
+        invalidateCache();
+        return toTierDto(saved);
     }
 
     @Transactional
@@ -271,6 +313,7 @@ public class PlatformSettingService {
         // Chỉ tắt thay vì xóa để giữ lịch sử đối chiếu
         tier.setActive(false);
         feeTierRepository.save(tier);
+        invalidateCache();
     }
 
     private FeeTierDto toTierDto(PlatformFeeTier t) {
@@ -285,34 +328,62 @@ public class PlatformSettingService {
                 .build();
     }
 
-    public FinancialSummaryResponse getFinancialSummary() {
-        List<TransactionResponse> recent = transactionRepository.findAllByOrderByCreatedAtDesc()
-                .stream().limit(50)
-                .map(t -> TransactionResponse.builder()
-                        .id(t.getId())
-                        .orderId(t.getOrder().getId())
-                        .productTitle(t.getProduct().getTitle())
-                        .buyerName(t.getBuyer().getFullName())
-                        .sellerName(t.getSeller().getFullName())
-                        .transactionAmount(t.getTransactionAmount())
-                        .platformFeeRate(t.getPlatformFeeRate())
-                        .platformFeeAmount(t.getPlatformFeeAmount())
-                        .sellerReceiveAmount(t.getSellerReceiveAmount())
-                        .createdAt(DisplayFormat.dateTime(t.getCreatedAt()))
-                        .build())
-                .collect(Collectors.toList());
+    // ================= TÀI CHÍNH & GIAO DỊCH =================
+
+    public PageResponse<TransactionResponse> getTransactionsPage(int page, int size) {
+        int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        Page<Object[]> rows = transactionRepository.findTransactionRows(PageRequest.of(Math.max(page, 0), safeSize));
+        return PageResponse.of(rows, this::mapTransactionRow);
+    }
+
+    public FinancialSummaryResponse getFinancialSummary(int page, int size) {
+        PageResponse<TransactionResponse> txPage = getTransactionsPage(page, size);
+
+        List<Object[]> totalsRows = transactionRepository.getFinancialTotals();
+        long completedCount = 0L;
+        BigDecimal totalValue = BigDecimal.ZERO;
+        BigDecimal totalFees = BigDecimal.ZERO;
+        if (!totalsRows.isEmpty()) {
+            Object[] r = totalsRows.get(0);
+            completedCount = r[0] != null ? ((Number) r[0]).longValue() : 0L;
+            totalValue = r[1] != null ? (BigDecimal) r[1] : BigDecimal.ZERO;
+            totalFees = r[2] != null ? (BigDecimal) r[2] : BigDecimal.ZERO;
+        }
+
+        Map<String, FeeCalculationResponse> previews = new LinkedHashMap<>();
+        previews.put("50k", calculate(new BigDecimal("50000")));
+        previews.put("500k", calculate(new BigDecimal("500000")));
+        previews.put("2m", calculate(new BigDecimal("2000000")));
 
         return FinancialSummaryResponse.builder()
-                .totalTransactionValue(transactionRepository.sumTotalTransactionValue())
-                .totalPlatformFees(transactionRepository.sumTotalPlatformFees())
-                .totalCompletedOrders((long) recent.size())
+                .totalTransactionValue(totalValue)
+                .totalPlatformFees(totalFees)
+                .totalCompletedOrders(completedCount)
                 .currentFeeRate(getCurrentFeeRate())
                 .minFee(getMinFee())
                 .maxFee(getMaxFee())
                 .roundStep(getRoundStep())
                 .feePayer(getFeePayer())
                 .feeEnabled(isFeeEnabled())
-                .recentTransactions(recent)
+                .recentTransactions(txPage.getContent())
+                .transactionsPage(txPage)
+                .feeTiers(getAllFeeTiers())
+                .feePreviews(previews)
+                .build();
+    }
+
+    private TransactionResponse mapTransactionRow(Object[] r) {
+        return TransactionResponse.builder()
+                .id((Long) r[0])
+                .orderId((Long) r[1])
+                .productTitle((String) r[2])
+                .buyerName((String) r[3])
+                .sellerName((String) r[4])
+                .transactionAmount((BigDecimal) r[5])
+                .platformFeeRate((BigDecimal) r[6])
+                .platformFeeAmount((BigDecimal) r[7])
+                .sellerReceiveAmount((BigDecimal) r[8])
+                .createdAt(DisplayFormat.dateTime((LocalDateTime) r[9]))
                 .build();
     }
 }

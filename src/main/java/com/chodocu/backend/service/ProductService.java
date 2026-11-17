@@ -40,6 +40,7 @@ import java.util.Set;
  */
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class ProductService {
 
     /** Chỉ cho phép sắp xếp theo các cột này (client gửi tên cột lạ sẽ dùng createdAt). */
@@ -90,13 +91,20 @@ public class ProductService {
     ) {
         int pageSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         Pageable pageable = PageRequest.of(Math.max(page, 0), pageSize, buildSort(sortBy, sortDir));
+        String cleanKeyword = StringUtils.hasText(keyword) ? keyword.trim().toLowerCase(java.util.Locale.ROOT) : "";
 
         Page<Product> productPage = productRepository.searchApprovedProducts(
-                keyword, categoryId, universityId, condition, minPrice, maxPrice, urgentOnly, pageable
+                cleanKeyword, categoryId, universityId, condition, minPrice, maxPrice, urgentOnly, pageable
         );
 
-        List<ProductResponse> content = productPage.getContent().stream()
-                .map(p -> dtoMapper.toProductResponse(p, isFavorited(currentUserId, p.getId())))
+        List<Product> products = productPage.getContent();
+        Set<Long> favoritedIds = (currentUserId != null && !products.isEmpty())
+                ? wishlistRepository.findFavoritedProductIds(
+                        currentUserId, products.stream().map(Product::getId).toList())
+                : Set.of();
+
+        List<ProductResponse> content = products.stream()
+                .map(p -> dtoMapper.toProductResponse(p, favoritedIds.contains(p.getId())))
                 .toList();
 
         return PageResponse.<ProductResponse>builder()
@@ -307,7 +315,7 @@ public class ProductService {
     }
 
     private Product findProduct(Long id) {
-        return productRepository.findById(id)
+        return productRepository.findWithDetailsById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tin đăng với mã #" + id));
     }
 

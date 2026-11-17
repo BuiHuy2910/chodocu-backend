@@ -28,6 +28,7 @@ import java.util.Set;
  */
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class OrderService {
 
     /** Đơn ở các trạng thái này coi như "đang xử lý" -> không cho đặt trùng. */
@@ -493,7 +494,7 @@ public class OrderService {
     }
 
     private OrderRequest findOrder(Long orderId) {
-        return orderRepository.findById(orderId)
+        return orderRepository.findWithDetailsById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
     }
 

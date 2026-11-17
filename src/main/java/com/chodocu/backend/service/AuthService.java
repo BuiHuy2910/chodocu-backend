@@ -13,6 +13,7 @@ import com.chodocu.backend.exception.BadRequestException;
 import com.chodocu.backend.exception.ResourceNotFoundException;
 import com.chodocu.backend.repository.UniversityRepository;
 import com.chodocu.backend.repository.UserRepository;
+import com.chodocu.backend.security.CustomUserDetailsService;
 import com.chodocu.backend.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -27,6 +28,7 @@ import org.springframework.util.StringUtils;
  */
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class AuthService {
 
     private final UserRepository userRepository;
@@ -34,6 +36,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider jwtTokenProvider;
+    private final CustomUserDetailsService userDetailsService;
     private final DtoMapper dtoMapper;
 
     /** Tạo tài khoản mới rồi trả token để người dùng vào app ngay. */
@@ -98,7 +101,9 @@ public class AuthService {
         if (request.getUniversityId() != null) {
             user.setUniversity(findUniversity(request.getUniversityId()));
         }
-        return dtoMapper.toUserSummary(userRepository.save(user));
+        User saved = userRepository.save(user);
+        userDetailsService.evict(saved.getEmail());
+        return dtoMapper.toUserSummary(saved);
     }
 
     /** Đổi ảnh đại diện; avatarUrl rỗng nghĩa là gỡ ảnh (giống hàm api_update_avatar trong SQL). */
@@ -110,7 +115,9 @@ public class AuthService {
             throw new BadRequestException("Đường dẫn ảnh không hợp lệ, vui lòng tải ảnh lên lại.");
         }
         user.setAvatarUrl(url);
-        return dtoMapper.toUserSummary(userRepository.save(user));
+        User saved = userRepository.save(user);
+        userDetailsService.evict(saved.getEmail());
+        return dtoMapper.toUserSummary(saved);
     }
 
     /** Đổi mật khẩu: bắt buộc nhập đúng mật khẩu hiện tại. */
@@ -125,6 +132,7 @@ public class AuthService {
         }
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        userDetailsService.evict(user.getEmail());
     }
 
     // ----------------------------------------------------------------

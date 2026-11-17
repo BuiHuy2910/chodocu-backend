@@ -1,8 +1,11 @@
 package com.chodocu.backend.dto.admin;
 
+import com.chodocu.backend.dto.PageResponse;
 import lombok.*;
+
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -20,4 +23,7 @@ public class FinancialSummaryResponse {
     private String feePayer;
     private Boolean feeEnabled;
     private List<TransactionResponse> recentTransactions;
+    private PageResponse<TransactionResponse> transactionsPage;
+    private List<FeeTierDto> feeTiers;
+    private Map<String, FeeCalculationResponse> feePreviews;
 }
