@@ -261,10 +261,21 @@ public class OrderService {
         reopenProductIfReserved(order, previousStatus);
 
         String action = isSeller ? "Người bán đã từ chối yêu cầu mua." : "Người mua đã hủy yêu cầu mua.";
-        chatService.sendSystemMessage(user, otherParty(order, user), order.getProduct(),
+        User recipient = otherParty(order, user);
+        chatService.sendSystemMessage(user, recipient, order.getProduct(),
                 action + noteSuffix("Lý do", cleanReason));
 
-        return dtoMapper.toOrderResponse(orderRepository.save(order));
+        OrderRequest saved = orderRepository.save(order);
+        notificationService.createNotification(
+                recipient,
+                isSeller ? "ORDER_REJECTED" : "ORDER_CANCELLED",
+                isSeller ? "Yêu cầu mua đã bị từ chối" : "Người mua đã hủy đơn hàng",
+                (isSeller ? user.getFullName() + " đã từ chối đơn " : user.getFullName() + " đã hủy đơn ")
+                        + saved.getOrderCode() + " cho \"" + saved.getProduct().getTitle() + "\""
+                        + noteSuffix("Lý do", cleanReason),
+                saved.getId()
+        );
+        return dtoMapper.toOrderResponse(saved);
     }
 
     // ----------------------------------------------------------------
