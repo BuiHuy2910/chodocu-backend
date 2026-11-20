@@ -31,6 +31,7 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
+    private final AdminStatsCache adminStatsCache;
 
     @Transactional
     public ReportResponse createReport(ReportRequest request, String reporterEmail) {
@@ -45,7 +46,9 @@ public class ReportService {
                 .detail(request.getDetail())
                 .status("PENDING")
                 .build();
-        return toDto(reportRepository.save(report));
+        Report saved = reportRepository.save(report);
+        adminStatsCache.invalidate();
+        return toDto(saved);
     }
 
     public PageResponse<ReportResponse> getReportsPage(String status, String keyword, int page, int size) {
@@ -57,9 +60,14 @@ public class ReportService {
                 cleanStatus, cleanKeyword, PageRequest.of(Math.max(page, 0), safeSize));
         PageResponse<ReportResponse> response = PageResponse.of(rows, this::mapRow);
 
-        long pendingCount = "PENDING".equals(cleanStatus) && cleanKeyword.isEmpty()
-                ? rows.getTotalElements()
-                : reportRepository.countByStatus("PENDING");
+        long pendingCount;
+        if ("PENDING".equals(cleanStatus) && cleanKeyword.isEmpty()) {
+            pendingCount = rows.getTotalElements();
+        } else if ("ALL".equals(cleanStatus) && cleanKeyword.isEmpty() && rows.getTotalElements() == 0) {
+            pendingCount = 0L;
+        } else {
+            pendingCount = reportRepository.countByStatus("PENDING");
+        }
         response.setMeta(Map.of("pendingCount", pendingCount));
         return response;
     }
@@ -74,7 +82,9 @@ public class ReportService {
         report.setAdminNote(adminNote);
         report.setResolvedBy(admin);
         report.setResolvedAt(DisplayFormat.nowUtc());
-        return toDto(reportRepository.save(report));
+        Report saved = reportRepository.save(report);
+        adminStatsCache.invalidate();
+        return toDto(saved);
     }
 
     public long countPendingReports() {

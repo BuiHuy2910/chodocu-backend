@@ -69,6 +69,7 @@ public class ProductService {
     private final ReportRepository reportRepository;
     private final DtoMapper dtoMapper;
     private final PlatformSettingService platformSettingService;
+    private final AdminStatsCache adminStatsCache;
 
     // ----------------------------------------------------------------
     // Xem tin
@@ -160,7 +161,9 @@ public class ProductService {
                 .build();
         applyRequest(product, request);
 
-        return dtoMapper.toProductResponse(productRepository.save(product), false);
+        Product saved = productRepository.save(product);
+        adminStatsCache.invalidate();
+        return dtoMapper.toProductResponse(saved, false);
     }
 
     @Transactional
@@ -176,7 +179,9 @@ public class ProductService {
             product.setStatus(ProductStatus.PENDING);
             product.setRejectReason(null);
         }
-        return dtoMapper.toProductResponse(productRepository.save(product), false);
+        Product saved = productRepository.save(product);
+        adminStatsCache.invalidate();
+        return dtoMapper.toProductResponse(saved, false);
     }
 
     // ----------------------------------------------------------------
@@ -203,7 +208,9 @@ public class ProductService {
             userRepository.save(seller);
         }
         product.setStatus(newStatus);
-        return dtoMapper.toProductResponse(productRepository.save(product), false);
+        Product saved = productRepository.save(product);
+        adminStatsCache.invalidate();
+        return dtoMapper.toProductResponse(saved, false);
     }
 
     /** Xóa tin chưa phát sinh giao dịch. Tin đã có đơn hàng thì chỉ được ẩn để giữ lịch sử. */
@@ -223,6 +230,7 @@ public class ProductService {
         reportRepository.clearProductReference(productId);
         wishlistRepository.deleteByProductId(productId);
         productRepository.delete(product);
+        adminStatsCache.invalidate();
     }
 
     // ----------------------------------------------------------------

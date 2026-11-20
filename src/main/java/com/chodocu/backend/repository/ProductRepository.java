@@ -88,9 +88,26 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             "(SELECT COUNT(*) FROM order_requests WHERE status = 'COMPLETED'), " +
             "(SELECT COALESCE(SUM(offered_price), 0) FROM order_requests WHERE status IN ('COMPLETED', 'ACCEPTED')), " +
             "(SELECT COUNT(*) FROM reports WHERE status = 'PENDING'), " +
-            "(SELECT COALESCE(SUM(platform_fee_amount), 0) FROM transactions)",
+            "(SELECT COALESCE(SUM(platform_fee_amount), 0) FROM transactions), " +
+            "(SELECT COALESCE(CAST(json_agg(json_build_array(name, cnt)) AS text), '[]') FROM (" +
+            "  SELECT c.name AS name, COUNT(p.id) AS cnt FROM products p JOIN categories c ON c.id = p.category_id GROUP BY c.name ORDER BY cnt DESC" +
+            ") cat_sub), " +
+            "(SELECT COALESCE(CAST(json_agg(json_build_array(short_name, cnt)) AS text), '[]') FROM (" +
+            "  SELECT u.short_name AS short_name, COUNT(p.id) AS cnt FROM products p JOIN universities u ON u.id = p.university_id GROUP BY u.short_name ORDER BY cnt DESC" +
+            ") uni_sub)",
             nativeQuery = true)
     List<Object[]> fetchDashboardOverviewCounts();
+
+    @Query(value = "SELECT " +
+            "(SELECT COUNT(*) FROM products WHERE status = 'PENDING'), " +
+            "(SELECT COALESCE(CAST(json_agg(name) AS text), '[]') FROM (" +
+            "  SELECT DISTINCT c.name AS name FROM products p JOIN categories c ON c.id = p.category_id WHERE p.status = 'PENDING' ORDER BY c.name ASC" +
+            ") c_sub), " +
+            "(SELECT COALESCE(CAST(json_agg(short_name) AS text), '[]') FROM (" +
+            "  SELECT DISTINCT u.short_name AS short_name FROM products p JOIN universities u ON u.id = p.university_id WHERE p.status = 'PENDING' ORDER BY u.short_name ASC" +
+            ") u_sub)",
+            nativeQuery = true)
+    List<Object[]> fetchPendingFilterMeta();
 
     @Query("SELECT p.status, COUNT(p) FROM Product p GROUP BY p.status")
     List<Object[]> countGroupByStatus();

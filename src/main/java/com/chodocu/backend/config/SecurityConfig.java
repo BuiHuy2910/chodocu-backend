@@ -56,12 +56,15 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Chỉ đăng ký / đăng nhập / health là công khai; /me, /profile, /password cần token
                         .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/api/health").permitAll()
                         .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
                         // Khách vãng lai vẫn xem được tin đăng, danh mục, trường
                         // ("/my-posts" khớp mẫu "/{id}" nên phải khai báo cần đăng nhập trước)
                         .requestMatchers(HttpMethod.GET, "/api/products/my-posts").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/products", "/api/products/{id}").permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/api/products", "/api/products/{id}").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories/**", "/api/universities/**").permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/api/categories/**", "/api/universities/**").permitAll()
                         // WebSocket: xác thực bằng token trong frame STOMP CONNECT (xem WebSocketAuthInterceptor)
                         .requestMatchers("/ws", "/ws/**", "/ws-raw", "/ws-raw/**").permitAll()
                         .requestMatchers("/uploads/**", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
@@ -88,9 +91,11 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOriginPatterns(List.of("*"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"));
         configuration.setAllowCredentials(true);
+        // Lưu kết quả preflight OPTIONS trên trình duyệt 24 giờ để không tốn thêm 1 vòng RTT mỗi lần gọi API
+        configuration.setMaxAge(86400L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

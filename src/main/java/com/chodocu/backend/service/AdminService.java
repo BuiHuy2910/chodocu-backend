@@ -23,6 +23,8 @@ import com.chodocu.backend.repository.TransactionRepository;
 import com.chodocu.backend.repository.UserRepository;
 import com.chodocu.backend.security.CustomUserDetailsService;
 import com.chodocu.backend.util.DisplayFormat;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -77,29 +79,24 @@ public class AdminService {
     private final CustomUserDetailsService userDetailsService;
     private final DtoMapper dtoMapper;
     private final NotificationService notificationService;
+    private final AdminStatsCache adminStatsCache;
+    private final ObjectMapper objectMapper;
 
     // ----------------------------------------------------------------
-    // Thống kê — chỉ chạy các câu GROUP BY / COUNT gọn nhẹ trên Supabase
+    // Thống kê — Gộp toàn bộ vào 1 câu SQL duy nhất + cache RAM 15 giây
     // ----------------------------------------------------------------
 
     public DashboardStatsResponse getDashboardStats(boolean includeFinancial) {
+        DashboardStatsResponse cached = adminStatsCache.getStats(includeFinancial);
+        if (cached != null) {
+            return cached;
+        }
+
         Object[] s = productRepository.fetchDashboardOverviewCounts().get(0);
+        Map<String, Long> byCategory = parseCountPairsJson(s[12]);
+        Map<String, Long> byUniversity = parseCountPairsJson(s[13]);
 
-        Map<String, Long> byCategory = new LinkedHashMap<>();
-        for (Object[] row : productRepository.countGroupByCategory()) {
-            if (row[0] != null && row[1] instanceof Number cnt) {
-                byCategory.put(String.valueOf(row[0]), cnt.longValue());
-            }
-        }
-
-        Map<String, Long> byUniversity = new LinkedHashMap<>();
-        for (Object[] row : productRepository.countGroupByUniversity()) {
-            if (row[0] != null && row[1] instanceof Number cnt) {
-                byUniversity.put(String.valueOf(row[0]), cnt.longValue());
-            }
-        }
-
-        return DashboardStatsResponse.builder()
+        DashboardStatsResponse fresh = DashboardStatsResponse.builder()
                 .totalStudents(toLong(s[0]))
                 .totalModerators(toLong(s[1]))
                 .totalProducts(toLong(s[2]))
@@ -115,6 +112,33 @@ public class AdminService {
                 .productsByCategory(byCategory)
                 .productsByUniversity(byUniversity)
                 .build();
+
+        adminStatsCache.putStats(includeFinancial, fresh);
+        return fresh;
+    }
+
+    private Map<String, Long> parseCountPairsJson(Object raw) {
+        Map<String, Long> map = new LinkedHashMap<>();
+        if (raw == null) return map;
+        try {
+            List<List<Object>> pairs = objectMapper.readValue(String.valueOf(raw), new TypeReference<>() {});
+            for (List<Object> pair : pairs) {
+                if (pair.size() >= 2 && pair.get(0) != null) {
+                    map.put(String.valueOf(pair.get(0)), toLong(pair.get(1)));
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return map;
+    }
+
+    private List<String> parseStringListJson(Object raw) {
+        if (raw == null) return List.of();
+        try {
+            return objectMapper.readValue(String.valueOf(raw), new TypeReference<List<String>>() {});
+        } catch (Exception ignored) {
+            return List.of();
+        }
     }
 
     private long toLong(Object v) {
@@ -176,12 +200,30 @@ public class AdminService {
         PageResponse<ProductResponse> pageDto = PageResponse.of(pendingPage, dtoMapper::toAdminProductResponse);
 
         boolean unfiltered = cleanKeyword.isEmpty() && cleanCat.isEmpty() && cleanSchool.isEmpty();
-        long totalPending = unfiltered
-                ? pendingPage.getTotalElements()
-                : productRepository.countByStatus(ProductStatus.PENDING);
+        long totalPending;
+        List<String> categories;
+        List<String> schools;
 
-        List<String> categories = productRepository.findDistinctPendingCategories();
-        List<String> schools = productRepository.findDistinctPendingSchools();
+        if (unfiltered && pendingPage.getTotalElements() == 0) {
+            totalPending = 0L;
+            categories = List.of();
+            schools = List.of();
+            adminStatsCache.putPendingMeta(new AdminStatsCache.PendingFilterMeta(0L, categories, schools));
+        } else {
+            AdminStatsCache.PendingFilterMeta meta = adminStatsCache.getPendingMeta();
+            if (meta == null) {
+                Object[] m = productRepository.fetchPendingFilterMeta().get(0);
+                meta = new AdminStatsCache.PendingFilterMeta(
+                        toLong(m[0]),
+                        parseStringListJson(m[1]),
+                        parseStringListJson(m[2])
+                );
+                adminStatsCache.putPendingMeta(meta);
+            }
+            totalPending = unfiltered ? pendingPage.getTotalElements() : meta.totalPending();
+            categories = meta.categories();
+            schools = meta.schools();
+        }
 
         Set<Long> sellerIds = products.stream()
                 .map(p -> p.getSeller() != null ? p.getSeller().getId() : null)
@@ -368,6 +410,7 @@ public class AdminService {
         ProductStatus to = hidden ? ProductStatus.HIDDEN : ProductStatus.APPROVED;
         product.setStatus(to);
         Product saved = productRepository.save(product);
+        adminStatsCache.invalidate();
 
         logModeration(saved, findUserByEmail(adminEmail), hidden ? "HIDE" : "UNHIDE", from, to, null);
         notificationService.createNotification(
@@ -474,6 +517,7 @@ public class AdminService {
         product.setStatus(ProductStatus.APPROVED);
         product.setRejectReason(null);
         Product saved = productRepository.save(product);
+        adminStatsCache.invalidate();
 
         logModeration(saved, admin, "APPROVE", from, ProductStatus.APPROVED, null);
         notificationService.createNotification(
@@ -491,6 +535,7 @@ public class AdminService {
         product.setStatus(ProductStatus.REJECTED);
         product.setRejectReason(reason);
         Product saved = productRepository.save(product);
+        adminStatsCache.invalidate();
 
         logModeration(saved, admin, "REJECT", from, ProductStatus.REJECTED, reason);
         notificationService.createNotification(

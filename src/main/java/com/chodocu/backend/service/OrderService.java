@@ -50,6 +50,7 @@ public class OrderService {
     private final PlatformSettingService platformSettingService;
     private final NotificationService notificationService;
     private final ChatService chatService;
+    private final AdminStatsCache adminStatsCache;
 
     // ----------------------------------------------------------------
     // Người mua đặt mua
@@ -102,7 +103,9 @@ public class OrderService {
                 savedOrder.getId()
         );
 
-        return dtoMapper.toOrderResponse(orderRepository.save(savedOrder));
+        OrderRequest finalSaved = orderRepository.save(savedOrder);
+        adminStatsCache.invalidate();
+        return dtoMapper.toOrderResponse(finalSaved);
     }
 
     // ----------------------------------------------------------------
@@ -150,7 +153,9 @@ public class OrderService {
                 order.getId()
         );
 
-        return dtoMapper.toOrderResponse(orderRepository.save(order));
+        OrderRequest saved = orderRepository.save(order);
+        adminStatsCache.invalidate();
+        return dtoMapper.toOrderResponse(saved);
     }
 
     /** Người mua hoặc người bán xác nhận đã giao nhận xong -> chốt phí sàn, sản phẩm chuyển Đã bán. */
@@ -203,7 +208,9 @@ public class OrderService {
                 order.getId()
         );
 
-        return dtoMapper.toOrderResponse(orderRepository.save(order));
+        OrderRequest saved = orderRepository.save(order);
+        adminStatsCache.invalidate();
+        return dtoMapper.toOrderResponse(saved);
     }
 
     // ----------------------------------------------------------------
@@ -369,6 +376,7 @@ public class OrderService {
                 "Đơn hàng được cập nhật bởi admin", message, saved.getId());
         notificationService.createNotification(saved.getSeller(), "ORDER_ADMIN_UPDATED",
                 "Đơn hàng được cập nhật bởi admin", message, saved.getId());
+        adminStatsCache.invalidate();
 
         return dtoMapper.toOrderResponse(saved);
     }
