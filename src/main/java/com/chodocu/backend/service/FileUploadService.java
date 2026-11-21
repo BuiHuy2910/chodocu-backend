@@ -105,9 +105,16 @@ public class FileUploadService {
             throw new BadRequestException("Ảnh vượt quá dung lượng cho phép (10MB)");
         }
         String contentType = file.getContentType() != null ? file.getContentType().toLowerCase() : "";
+        if (contentType.contains(";")) {
+            contentType = contentType.split(";")[0].trim();
+        }
         String extension = EXTENSIONS.get(contentType);
         if (extension == null) {
-            throw new BadRequestException("Chỉ chấp nhận ảnh JPEG, PNG, WEBP hoặc GIF");
+            String filename = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase() : "";
+            if (filename.endsWith(".png")) extension = ".png";
+            else if (filename.endsWith(".webp")) extension = ".webp";
+            else if (filename.endsWith(".gif")) extension = ".gif";
+            else extension = ".jpg";
         }
         return extension;
     }
